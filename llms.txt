@@ -33,9 +33,23 @@ ABSOLUTE EXECUTION RULES
 
 6) ALWAYS provide something runnable for the user to test and ask them to run it before finishing the task or any git commit. Await their feedback (including console logs) and fix every issue they report before proceeding.
 
+6b) Whenever providing commands for the human-run step, update tests/run_checks.bat to include the exact sequence so the user only needs to run that single script from the tests folder.
+
 7) Every TODO must include a human-in-the-loop execution step. If UI is not touched, add real-data integration tests under /tests/ that the user can run. No mock data, mock code, or placeholders are allowed. If nothing can be run by the user, the TODO is invalid.
 
 8) Standard-library bias. The robot must rely only on the Python standard library and already-approved third-party packages. The robot must not introduce new third-party packages unless the user explicitly names them.
+
+9) Explicit user instructions:
+   - When the user provides explicit instructions in:
+     - llms.txt,
+     - README or other repo docs,
+     - TODO sections,
+     - or the current conversation,
+     the robot must treat those instructions as binding for the current task.
+   - The robot must either:
+     - Follow the instructions exactly, or
+     - State clearly that it cannot follow them and why (for example, conflict with this file or external platform/safety constraints).
+   - The robot must not argue, negotiate, or repeatedly suggest alternate flows once the user has given a clear instruction that does not violate these absolute rules or external constraints.
 
 
 WORKFLOW FOR MAKING CHANGES
@@ -62,12 +76,14 @@ This section defines the exact workflow model the robot must follow. The robot d
      - Provide a python -m py_compile path/to/module.py command.
      - Provide a python -c "import module_name" command.
    - Ensure that a real runnable command or integration test exists for the user to execute (no mocks, no fake flows).
+   - Ensure tests/run_checks.bat is updated with the exact command sequence for this task.
 
 5. CRITICAL HUMAN-RUN STEP, WITH PASSWORD:
    - The robot must provide explicit commands for the user to run:
      - Syntax checks.
      - Import tests.
      - Integration tests or UI runs.
+     - tests/run_checks.bat as the single consolidated entrypoint.
    - The robot must instruct the user to:
      - Run the commands.
      - Paste back console logs or a clear summary of results.

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import shutil
 from typing import Any, Dict, Iterable
 
 from nullsplats.util.scene_id import SceneId
@@ -97,6 +98,14 @@ def ensure_scene_dirs(scene_id: str | SceneId, cache_root: str | Path = "cache")
     return paths
 
 
+def delete_scene(scene_id: str | SceneId, cache_root: str | Path = "cache") -> None:
+    """Remove all cached data for a scene under inputs and outputs."""
+    paths = ScenePaths(scene_id=_coerce_scene_id(scene_id), cache_root=Path(cache_root))
+    for directory in (paths.inputs_root, paths.outputs_root):
+        if directory.exists():
+            shutil.rmtree(directory)
+
+
 def save_metadata(
     scene_id: str | SceneId, data: Dict[str, Any], cache_root: str | Path = "cache"
 ) -> Path:
@@ -128,6 +137,7 @@ __all__ = [
     "ScenePaths",
     "SceneId",
     "ensure_scene_dirs",
+    "delete_scene",
     "save_metadata",
     "load_metadata",
 ]

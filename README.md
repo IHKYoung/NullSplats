@@ -190,6 +190,8 @@ Inputs tab:
     - Prompt for a Scene ID using alphanumeric characters, underscores, or dashes.
     - Create the cache directories for inputs and outputs.
     - Initialize metadata file.
+  - Delete Scene:
+    - Remove cached inputs and outputs for the selected scene.
 - Source type:
   - Radio buttons for:
     - Video file input.
@@ -203,7 +205,7 @@ Inputs tab:
 - Actions:
   - Extract Frames:
     - Copies or links original source into cache/inputs/<scene_id>/source.
-    - Runs frame extraction using `moviepy` for video or raw image iteration for folder input.
+    - Runs frame extraction using ffmpeg-based raw video decoding or direct image loading for folder input.
     - Stores frames in frames_all.
     - Computes quality scores for frames using a chosen method such as Laplacian-based sharpness.
   - Reuse Cached Frames:
@@ -451,7 +453,7 @@ TODO-1 (completed): App skeleton and threading model
   - Runnable step:
     - python -c "from nullsplats.util.threading import run_in_background; print('thread helper import ok')"
 
-TODO-2: Inputs tab
+TODO-2 (completed): Inputs tab
 
 - Scene creation flow:
   - Implement New Scene dialog and directory creation via io_cache.

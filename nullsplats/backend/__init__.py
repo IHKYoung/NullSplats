@@ -4,14 +4,32 @@ from nullsplats.backend.io_cache import (
     SceneId,
     ScenePaths,
     ensure_scene_dirs,
+    delete_scene,
     load_metadata,
     save_metadata,
+)
+from nullsplats.backend.video_frames import (
+    FrameScore,
+    ExtractionResult,
+    FFMPEGVideoReader,
+    auto_select_best,
+    extract_frames,
+    load_cached_frames,
+    persist_selection,
 )
 
 __all__ = [
     "SceneId",
     "ScenePaths",
     "ensure_scene_dirs",
+    "delete_scene",
     "save_metadata",
     "load_metadata",
+    "FrameScore",
+    "ExtractionResult",
+    "FFMPEGVideoReader",
+    "auto_select_best",
+    "extract_frames",
+    "load_cached_frames",
+    "persist_selection",
 ]
