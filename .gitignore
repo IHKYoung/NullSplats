@@ -1,0 +1,23 @@
+# Virtual environments
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Build / dist
+build/
+dist/
+
+# Logs and cache
+logs/
+cache/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Nuitka outputs
+*.dist-info/
+*.build/
