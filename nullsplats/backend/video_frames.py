@@ -235,6 +235,15 @@ def auto_select_best(frame_scores: Sequence[FrameScore], target_count: int) -> L
     return [item.filename for item in limited]
 
 
+def _evenly_spaced_indices(total: int, count: int) -> List[int]:
+    """Return ``count`` indices spread across ``total`` items (inclusive endpoints)."""
+    if total <= 0 or count <= 0:
+        return []
+    if count >= total:
+        return list(range(total))
+    return np.linspace(0, total - 1, num=count, dtype=int).tolist()
+
+
 def _copy_source_to_cache(source: Path, dest_dir: Path, source_type: str) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     if source_type == "video":
@@ -280,19 +289,40 @@ def _extract_from_video(
     if total_frames is None or total_frames <= 0:
         raise ValueError(f"Video contains no frames: {source_file}")
     sample_count = min(candidate_count, total_frames)
-    logger.info("Video extraction start: total_frames=%d sample_count=%d", total_frames, sample_count)
+    target_indices = (
+        _evenly_spaced_indices(total_frames, sample_count) if reader.frame_count is not None else list(range(sample_count))
+    )
+    logger.info(
+        "Video extraction start: total_frames=%d sample_count=%d spaced=%s",
+        total_frames,
+        sample_count,
+        reader.frame_count is not None,
+    )
     scores: List[FrameScore] = []
+    next_target_idx = 0
+    next_target = target_indices[next_target_idx] if target_indices else None
     try:
         for idx, frame in enumerate(reader):
-            if idx >= sample_count:
+            if next_target is None:
                 break
-            filename = f"frame_{idx:04d}.png"
+            if idx < next_target:
+                continue
+            if idx > next_target:
+                # If ffprobe over-reported frames, keep advancing targets we skipped past.
+                while next_target is not None and idx > next_target:
+                    next_target_idx += 1
+                    next_target = target_indices[next_target_idx] if next_target_idx < len(target_indices) else None
+                if next_target is None or idx != next_target:
+                    continue
+            filename = f"frame_{len(scores):04d}.png"
             destination = output_dir / filename
             _save_frame_image(frame, destination)
             score = _sharpness_score(frame)
             scores.append(FrameScore(filename=filename, score=score))
             if progress_callback:
-                progress_callback(idx + 1, sample_count)
+                progress_callback(len(scores), sample_count)
+            next_target_idx += 1
+            next_target = target_indices[next_target_idx] if next_target_idx < len(target_indices) else None
     finally:
         reader.close()
     if scores:
@@ -325,9 +355,16 @@ def _extract_from_image_folder(
     if not image_files:
         raise FileNotFoundError(f"No images to process in {source_dir}")
     use_count = min(candidate_count, len(image_files))
-    logger.info("Image extraction start: discovered=%d using=%d", len(image_files), use_count)
+    indices = _evenly_spaced_indices(len(image_files), use_count)
+    logger.info(
+        "Image extraction start: discovered=%d using=%d spaced=%s",
+        len(image_files),
+        use_count,
+        len(indices) == use_count and use_count < len(image_files),
+    )
     scores: List[FrameScore] = []
-    for idx, image_path in enumerate(image_files[:use_count]):
+    for idx, image_list_index in enumerate(indices):
+        image_path = image_files[image_list_index]
         frame = _load_image_to_array(image_path)
         filename = f"frame_{idx:04d}.png"
         destination = output_dir / filename

@@ -7,6 +7,8 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 from typing import Callable, Dict, List, Optional
 
+from PIL import Image, ImageTk
+
 from nullsplats.app_state import AppState, SceneStatus
 from nullsplats.backend.io_cache import ScenePaths, ensure_scene_dirs, delete_scene
 from nullsplats.backend.video_frames import (
@@ -43,29 +45,45 @@ class InputsTab:
         self.frame_vars: Dict[str, tk.BooleanVar] = {}
         self.frame_scores: Dict[str, float] = {}
         self.thumbnail_refs: List[tk.PhotoImage] = []
+        self._thumbnail_labels: Dict[str, ttk.Label] = {}
+        self._thumbnail_job: Optional[str] = None
+        self._thumb_queue: List[str] = []
+        self._grid_columns = 3
         self.current_result: Optional[ExtractionResult] = None
 
-        self._build_header()
-        self._build_source_controls()
-        self._build_scene_controls()
-        self._build_action_buttons()
-        self._build_selection_controls()
-        self._build_grid()
+        self._build_layout()
         self.refresh_scenes()
 
-    def _build_header(self) -> None:
-        container = ttk.Frame(self.frame)
+    def _build_layout(self) -> None:
+        paned = ttk.Panedwindow(self.frame, orient="horizontal")
+        paned.pack(fill="both", expand=True)
+
+        controls_col = ttk.Frame(paned)
+        preview_col = ttk.Frame(paned)
+        paned.add(controls_col, weight=1)
+        paned.add(preview_col, weight=2)
+
+        self._build_header(controls_col)
+        self._build_source_controls(controls_col)
+        self._build_scene_controls(controls_col)
+        self._build_action_buttons(controls_col)
+
+        self._build_selection_controls(preview_col)
+        self._build_grid(preview_col)
+
+    def _build_header(self, parent: tk.Misc) -> None:
+        container = ttk.Frame(parent)
         container.pack(fill="x", padx=10, pady=(10, 6))
         ttk.Label(
             container,
-            text="Step 1: Choose input (video or image folder).  Step 2: Scene name auto-fills from input; adjust if needed.  Step 3: Extract, review, and save selection.",
-            wraplength=780,
+            text="1) Pick input, 2) Name/select scene, 3) Extract, 4) Pick frames.",
+            wraplength=420,
             justify="left",
             font=("Segoe UI", 10, "bold"),
         ).pack(anchor="w")
 
-    def _build_scene_controls(self) -> None:
-        container = ttk.LabelFrame(self.frame, text="Step 2: Scene name and cached scenes")
+    def _build_scene_controls(self, parent: tk.Misc) -> None:
+        container = ttk.LabelFrame(parent, text="Scene name and cached scenes")
         container.pack(fill="x", padx=10, pady=(6, 8))
 
         ttk.Label(container, text="Scene name (auto-filled from input):").pack(anchor="w", padx=6, pady=(4, 2))
@@ -83,7 +101,7 @@ class InputsTab:
         list_frame = ttk.Frame(container)
         list_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
-        self.scene_list = tk.Listbox(list_frame, height=5)
+        self.scene_list = tk.Listbox(list_frame, height=6)
         self.scene_list.pack(side="left", fill="both", expand=True)
         self.scene_list.bind("<<ListboxSelect>>", self._handle_selection)
 
@@ -91,8 +109,8 @@ class InputsTab:
         scrollbar.pack(side="right", fill="y")
         self.scene_list.config(yscrollcommand=scrollbar.set)
 
-    def _build_source_controls(self) -> None:
-        wrapper = ttk.LabelFrame(self.frame, text="Step 1: Pick input")
+    def _build_source_controls(self, parent: tk.Misc) -> None:
+        wrapper = ttk.LabelFrame(parent, text="Pick input")
         wrapper.pack(fill="x", padx=10, pady=(0, 8))
 
         source_row = ttk.Frame(wrapper)
@@ -108,7 +126,7 @@ class InputsTab:
         ttk.Label(
             wrapper,
             text="Pick the input path. The chosen file/folder is copied into the scene cache for reuse. Scene name auto-fills from this selection.",
-            wraplength=780,
+            wraplength=420,
             justify="left",
         ).pack(anchor="w", padx=6, pady=(0, 6))
 
@@ -126,8 +144,8 @@ class InputsTab:
         ttk.Button(paths, text="Browse", command=self._choose_image_dir).grid(row=1, column=2, sticky="e", pady=(4, 0))
         paths.columnconfigure(1, weight=1)
 
-    def _build_action_buttons(self) -> None:
-        wrapper = ttk.LabelFrame(self.frame, text="Step 3: Extract and review")
+    def _build_action_buttons(self, parent: tk.Misc) -> None:
+        wrapper = ttk.LabelFrame(parent, text="Extract and review")
         wrapper.pack(fill="x", padx=10, pady=(0, 8))
 
         params = ttk.Frame(wrapper)
@@ -148,15 +166,15 @@ class InputsTab:
         self.status_label = ttk.Label(actions, textvariable=self.status_var, foreground="#444")
         self.status_label.pack(side="left", padx=(12, 0))
 
-    def _build_selection_controls(self) -> None:
-        controls = ttk.Frame(self.frame)
-        controls.pack(fill="x", padx=10, pady=(0, 6))
+    def _build_selection_controls(self, parent: tk.Misc) -> None:
+        controls = ttk.Frame(parent)
+        controls.pack(fill="x", padx=10, pady=(10, 6))
         ttk.Button(controls, text="Select All", command=self._select_all).pack(side="left")
         ttk.Button(controls, text="Select None", command=self._select_none).pack(side="left", padx=(6, 0))
         ttk.Button(controls, text="Auto-Select Best N", command=self._auto_select).pack(side="left", padx=(6, 0))
 
-    def _build_grid(self) -> None:
-        container = ttk.LabelFrame(self.frame, text="Frame selection")
+    def _build_grid(self, parent: tk.Misc) -> None:
+        container = ttk.LabelFrame(parent, text="Frame selection")
         container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self.canvas = tk.Canvas(container, borderwidth=0, height=360)
@@ -166,6 +184,7 @@ class InputsTab:
         self.grid_inner.bind(
             "<Configure>", lambda _: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
+        self.canvas.bind("<Configure>", self._on_grid_resize)
         self.canvas.create_window((0, 0), window=self.grid_inner, anchor="nw")
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
@@ -284,6 +303,12 @@ class InputsTab:
         except Exception as exc:  # noqa: BLE001 - surfaced to user
             self._handle_error(exc)
             return
+        if result.selected_frames:
+            try:
+                result = persist_selection(scene_id, result.selected_frames, cache_root=self.app_state.config.cache_root)
+            except Exception as exc:  # noqa: BLE001
+                self._handle_error(exc)
+                return
         self._render_result(result)
         self.status_var.set("Loaded cached frames and selection.")
 
@@ -304,25 +329,34 @@ class InputsTab:
         self.target_var.set(result.target_count)
         self.candidate_var.set(result.candidate_count)
         self.frame_scores = {item.filename: item.score for item in result.frame_scores}
+        current_selection = set(self._selected_frames()) if self.frame_vars else set(result.selected_frames)
         self.frame_vars.clear()
         self.thumbnail_refs.clear()
+        self._thumbnail_labels.clear()
+        self._thumb_queue.clear()
+        if self._thumbnail_job is not None:
+            try:
+                self.frame.after_cancel(self._thumbnail_job)
+            except Exception:
+                pass
+            self._thumbnail_job = None
         for child in self.grid_inner.winfo_children():
             child.destroy()
 
-        columns = 3
+        columns = self._desired_columns(max(self.canvas.winfo_width(), self.canvas.winfo_reqwidth()))
+        self._grid_columns = columns
         for idx, filename in enumerate(result.available_frames):
             row = idx // columns
             column = idx % columns
-            holder = ttk.Frame(self.grid_inner, padding=4)
+            holder = ttk.Frame(self.grid_inner, padding=6)
             holder.grid(row=row, column=column, sticky="nwes")
 
-            image_path = result.paths.frames_all_dir / filename
-            photo = self._load_thumbnail(image_path)
-            self.thumbnail_refs.append(photo)
-            ttk.Label(holder, image=photo).pack(anchor="center")
+            placeholder = ttk.Label(holder, text="Loading...", anchor="center", width=24)
+            placeholder.pack(anchor="center")
+            self._thumbnail_labels[filename] = placeholder
 
             score = self.frame_scores.get(filename, 0.0)
-            var = tk.BooleanVar(value=filename in result.selected_frames)
+            var = tk.BooleanVar(value=filename in current_selection or filename in result.selected_frames)
             self.frame_vars[filename] = var
             ttk.Checkbutton(
                 holder,
@@ -334,22 +368,60 @@ class InputsTab:
         for col in range(columns):
             self.grid_inner.grid_columnconfigure(col, weight=1)
         self.grid_inner.update_idletasks()
+        self._thumb_queue = list(result.available_frames)
+        self._thumbnail_job = self.frame.after(10, lambda: self._drain_thumbnail_queue(result))
         self._sync_status()
 
     def _clear_grid(self) -> None:
+        if self._thumbnail_job is not None:
+            try:
+                self.frame.after_cancel(self._thumbnail_job)
+            except Exception:
+                pass
+            self._thumbnail_job = None
+        self._thumb_queue.clear()
+        self._thumbnail_labels.clear()
         self.frame_vars.clear()
         self.frame_scores.clear()
         self.thumbnail_refs.clear()
         for child in self.grid_inner.winfo_children():
             child.destroy()
 
+    def _drain_thumbnail_queue(self, result: ExtractionResult, chunk_size: int = 12) -> None:
+        loaded = 0
+        while self._thumb_queue and loaded < chunk_size:
+            name = self._thumb_queue.pop(0)
+            image_path = result.paths.frames_all_dir / name
+            photo = self._load_thumbnail(image_path)
+            self.thumbnail_refs.append(photo)
+            label = self._thumbnail_labels.get(name)
+            if label is not None:
+                label.config(image=photo, text="")
+                label.image = photo
+            loaded += 1
+        if self._thumb_queue:
+            self._thumbnail_job = self.frame.after(10, lambda: self._drain_thumbnail_queue(result, chunk_size))
+        else:
+            self._thumbnail_job = None
+
     def _load_thumbnail(self, path: Path) -> tk.PhotoImage:
-        photo = tk.PhotoImage(file=str(path))
-        max_width = 240
-        scale = max(1, int(photo.width() / max_width)) if photo.width() > max_width else 1
-        if scale > 1:
-            photo = photo.subsample(scale, scale)
-        return photo
+        try:
+            with Image.open(path) as img:
+                img = img.convert("RGB")
+                img.thumbnail((360, 360), Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
+        except Exception:
+            return tk.PhotoImage(width=1, height=1)
+
+    def _desired_columns(self, width: int) -> int:
+        card_width = 220  # approximate card width including padding
+        return max(1, min(6, width // card_width if width > 0 else 3))
+
+    def _on_grid_resize(self, event: tk.Event) -> None:
+        desired = self._desired_columns(event.width)
+        if desired != self._grid_columns and self.current_result is not None:
+            self._grid_columns = desired
+            self._render_result(self.current_result)
 
     def _selected_frames(self) -> List[str]:
         return [name for name, var in self.frame_vars.items() if var.get()]

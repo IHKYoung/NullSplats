@@ -151,7 +151,8 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             self.bind("<MouseWheel>", self._on_mouse_wheel)
             self.bind("<ButtonRelease-1>", self._on_mouse_up)
             self.bind("<ButtonRelease-3>", self._on_mouse_up)
-            self.animate = 1  # Enable continuous rendering
+            # Keep the render loop paused until data or explicit start is requested.
+            self.animate = 0
     
     def _show_error(self):
         """Show error when PyOpenGL not available."""
@@ -703,11 +704,13 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             glUniformMatrix4fv(proj_loc, 1, GL_TRUE, projection)
             glUniformMatrix4fv(view_loc, 1, GL_TRUE, view)
             
-            logger.debug(
-                "Uniform biases: scale_bias=%s opacity_bias=%.3f",
-                self.scale_bias.tolist(),
-                self.opacity_bias,
-            )
+            if not hasattr(self, "_uniform_bias_logged"):
+                logger.debug(
+                    "Uniform biases: scale_bias=%s opacity_bias=%.3f",
+                    self.scale_bias.tolist(),
+                    self.opacity_bias,
+                )
+                self._uniform_bias_logged = True
             # Apply debug scale multiplier if in debug mode
             debug_scale = self.point_scale * (5.0 if self.debug_mode else 1.0)
             glUniform1f(point_scale_loc, debug_scale)
@@ -738,28 +741,14 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             # Unbind program
             glUseProgram(0)
             
-            # DEBUG: Check if anything was actually drawn
+            # DEBUG: Check if anything was actually drawn (first frame only)
             if not hasattr(self, '_draw_logged'):
                 self._draw_logged = True
-                # Check for OpenGL errors
                 err = glGetError()
                 if err != GL_NO_ERROR:
                     logger.error(f"OpenGL error after draw: {err} (0x{err:04x})")
                 else:
                     logger.info("glDrawArraysInstanced completed without GL errors")
-                
-                # Try to read a few pixels to see if anything was drawn
-                try:
-                    pixels = glReadPixels(self.width//2, self.height//2, 1, 1, GL_RGB, GL_UNSIGNED_BYTE)
-                    pixel_value = tuple(pixels[0])
-                    logger.info(f"Center pixel value: {pixel_value} (should not be (0,0,0) if something rendered)")
-                    
-                    # Sample a few more points
-                    for x, y in [(self.width//4, self.height//4), (3*self.width//4, 3*self.height//4)]:
-                        pixels = glReadPixels(x, y, 1, 1, GL_RGB, GL_UNSIGNED_BYTE)
-                        logger.info(f"Pixel at ({x},{y}): {tuple(pixels[0])}")
-                except Exception as e:
-                    logger.warning(f"Could not read pixels: {e}")
             
         except Exception as e:
             logger.exception("Error during Gaussian splat rendering")
