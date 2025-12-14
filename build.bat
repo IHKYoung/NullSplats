@@ -17,12 +17,18 @@ set "CUDA_SRC_ARG=%1"
 set "ZIP_PATH=%BUILD_DIR%\NullSplats-portable.zip"
 if "%SKIP_ZIP%"=="" set "SKIP_ZIP=0"
 if "%REQUIRE_CUDA%"=="" set "REQUIRE_CUDA=1"
+set "PY_BASE_SRC="
 
 if not "%CUDA_SRC_ARG%"=="" (
     set "CUDA_SRC=%CUDA_SRC_ARG%"
 )
 
 if "%SKIP_CLEAN%"=="" set "SKIP_CLEAN=0"
+
+if exist "%VENV%\pyvenv.cfg" (
+    for /f "usebackq tokens=*" %%L in (`powershell -NoLogo -NoProfile -Command "(Get-Content '%VENV:\=\\%\\pyvenv.cfg' | Where-Object {$_ -match '^home\s*='} | Select-Object -First 1) -replace '.*?=\s*',''"`) do set "PY_BASE_SRC=%%L"
+)
+if "%PY_BASE_SRC%"=="" set "PY_BASE_SRC=C:\Program Files\Python310"
 
 echo.
 echo === NullSplats portable bundle ===
@@ -32,6 +38,7 @@ echo Output:      %OUT_DIR%
 echo COLMAP src:  %COLMAP_SRC%
 echo GLOMAP src:  %GLOMAP_SRC%
 echo CUDA src:    %CUDA_SRC%
+echo Python base: %PY_BASE_SRC%
 echo Skip clean:  %SKIP_CLEAN%
 echo Skip zip:    %SKIP_ZIP%
 echo Require CUDA copy: %REQUIRE_CUDA%
@@ -70,6 +77,9 @@ if exist "%COLMAP_SRC%" (
 echo Copying venv...
 robocopy "%VENV%" "%OUT_DIR%\venv" /mir >nul
 
+echo Copying base Python runtime...
+robocopy "%PY_BASE_SRC%" "%OUT_DIR%\python" /mir >nul
+
 echo Pruning unused Python packages...
 for %%D in ("%OUT_DIR%\venv\Lib\site-packages\tqdm" "%OUT_DIR%\venv\Lib\site-packages\tqdm-*.dist-info" "%OUT_DIR%\venv\Lib\site-packages\tyro" "%OUT_DIR%\venv\Lib\site-packages\tyro-*.dist-info" "%OUT_DIR%\venv\Lib\site-packages\cv2" "%OUT_DIR%\venv\Lib\site-packages\opencv_python-*.dist-info" "%OUT_DIR%\venv\Lib\site-packages\yaml" "%OUT_DIR%\venv\Lib\site-packages\PyYAML-*.dist-info") do (
     if exist "%%~D" rd /s /q "%%~D"
@@ -87,11 +97,14 @@ if not exist "%CUDA_SRC%" (
 ) else (
     echo Copying CUDA runtime from %CUDA_SRC% ...
     set "CUDA_DEST_BIN=%OUT_DIR%\cuda\bin"
+    set "CUDA_DEST_LIB=%OUT_DIR%\cuda\lib\x64"
     mkdir "%OUT_DIR%\cuda" >nul 2>&1
     mkdir "!CUDA_DEST_BIN!" >nul 2>&1
+    mkdir "!CUDA_DEST_LIB!" >nul 2>&1
 
     set "CUDA_PATTERNS=cudart64_*.dll cublas64_*.dll cublasLt64_*.dll cusparse64_*.dll cusolver64_*.dll cufft64_*.dll curand64_*.dll cudnn64_*.dll nvrtc64_*.dll nvrtc-builtins64_*.dll nvJitLink_*.dll"
-    set "CUDA_COPIED=0"
+    set "CUDA_COPIED_BIN=0"
+    set "CUDA_COPIED_LIB=0"
 
     if exist "%CUDA_SRC%\bin" (
         echo ... copying from "%CUDA_SRC%\bin" to "!CUDA_DEST_BIN!"
@@ -100,21 +113,42 @@ if not exist "%CUDA_SRC%" (
         for %%P in (!CUDA_PATTERNS!) do (
             for /f "delims=" %%F in ('dir /b "%CUDA_SRC%\bin\%%P" 2^>nul') do (
                 copy /y "%CUDA_SRC%\bin\%%F" "!CUDA_DEST_BIN!\" >nul
-                set "CUDA_COPIED=1"
+                set "CUDA_COPIED_BIN=1"
             )
         )
-        if "!CUDA_COPIED!"=="0" (
+        if "!CUDA_COPIED_BIN!"=="0" (
             echo ... fallback copying all cud*/nv* DLLs
             for /f "delims=" %%F in ('dir /b "%CUDA_SRC%\bin\cud*.dll" "%CUDA_SRC%\bin\nv*.dll" 2^>nul') do (
                 copy /y "%CUDA_SRC%\bin\%%F" "!CUDA_DEST_BIN!\" >nul
-                set "CUDA_COPIED=1"
+                set "CUDA_COPIED_BIN=1"
             )
         )
     ) else (
         echo [warn] CUDA bin not found at "%CUDA_SRC%\bin"
     )
 
-    if "!CUDA_COPIED!"=="0" (
+    if exist "%CUDA_SRC%\lib\x64" (
+        echo ... copying from "%CUDA_SRC%\lib\x64" to "!CUDA_DEST_LIB!"
+        echo Source lib candidates:
+        dir /b "%CUDA_SRC%\lib\x64\cud*.dll" "%CUDA_SRC%\lib\x64\nv*.dll" 2>nul | findstr /r "." || echo ^(none^)
+        for %%P in (!CUDA_PATTERNS!) do (
+            for /f "delims=" %%F in ('dir /b "%CUDA_SRC%\lib\x64\%%P" 2^>nul') do (
+                copy /y "%CUDA_SRC%\lib\x64\%%F" "!CUDA_DEST_LIB!\" >nul
+                set "CUDA_COPIED_LIB=1"
+            )
+        )
+        if "!CUDA_COPIED_LIB!"=="0" (
+            echo ... fallback copying all cud*/nv* DLLs from lib\x64
+            for /f "delims=" %%F in ('dir /b "%CUDA_SRC%\lib\x64\cud*.dll" "%CUDA_SRC%\lib\x64\nv*.dll" 2^>nul') do (
+                copy /y "%CUDA_SRC%\lib\x64\%%F" "!CUDA_DEST_LIB!\" >nul
+                set "CUDA_COPIED_LIB=1"
+            )
+        )
+    ) else (
+        echo [warn] CUDA lib64 not found at "%CUDA_SRC%\lib\x64"
+    )
+
+    if "!CUDA_COPIED_BIN!"=="0" if "!CUDA_COPIED_LIB!"=="0" (
         if "%REQUIRE_CUDA%"=="1" (
             echo [error] CUDA DLL copy produced no files; ensure CUDA_SRC is correct or set REQUIRE_CUDA=0 to skip. & exit /b 1
         ) else (
@@ -124,27 +158,14 @@ if not exist "%CUDA_SRC%" (
         echo CUDA DLLs copied to %OUT_DIR%\cuda
         echo CUDA bin contents:
         dir "!CUDA_DEST_BIN!" 2>nul
+        echo CUDA lib64 contents:
+        dir "!CUDA_DEST_LIB!" 2>nul
     )
 )
 
 echo Writing run.bat launcher...
-(
-    echo @echo off
-    echo setlocal
-    echo set "APP_DIR=%%~dp0"
-    echo if "%%APP_DIR:~-1%%"=="\" set "APP_DIR=%%APP_DIR:~0,-1%%"
-    echo set "VIRTUAL_ENV=%%APP_DIR%%\venv"
-    echo set "PATH=%%VIRTUAL_ENV%%\Scripts;%%PATH%%"
-    echo if exist "%%APP_DIR%%\cuda\bin" set "PATH=%%APP_DIR%%\cuda\bin;%%PATH%%"
-    echo if exist "%%APP_DIR%%\cuda\lib\x64" set "PATH=%%APP_DIR%%\cuda\lib\x64;%%PATH%%"
-    echo set "CUDA_HOME=%%APP_DIR%%\cuda"
-    echo set "CUDA_PATH=%%APP_DIR%%\cuda"
-    echo set "COLMAP_ROOT=%%APP_DIR%%\tools\colmap"
-    echo if exist "%%COLMAP_ROOT%%\bin" set "PATH=%%COLMAP_ROOT%%\bin;%%PATH%%"
-    echo if exist "%%COLMAP_ROOT%%\lib" set "PATH=%%COLMAP_ROOT%%\lib;%%PATH%%"
-    echo "%%VIRTUAL_ENV%%\Scripts\python.exe" "%%APP_DIR%%\main.py" %%*
-) > "%OUT_DIR%\run.bat"
-copy /y "%OUT_DIR%\run.bat" "%BUILD_DIR%\run-portable.bat" >nul 2>&1
+copy /y "%ROOT%\run.bat" "%OUT_DIR%\run.bat" >nul
+copy /y "%ROOT%\run.bat" "%BUILD_DIR%\run-portable.bat" >nul 2>&1
 
 echo.
 if "%SKIP_ZIP%"=="0" (

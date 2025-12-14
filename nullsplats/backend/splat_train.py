@@ -22,7 +22,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 from nullsplats.backend.io_cache import ScenePaths, ensure_scene_dirs
 from nullsplats.backend.gs_utils import AppearanceOptModule, CameraOptModule, rgb_to_sh, set_random_seed
@@ -37,6 +36,13 @@ ProgressCallback = Callable[[int, int, float], None]
 CheckpointCallback = Callable[[int, Path], None]
 gsplat = None  # set after toolkit configuration
 rasterization = None  # set after toolkit configuration
+_SSIM_AVAILABLE = True
+
+try:
+    from torchmetrics.image import StructuralSimilarityIndexMeasure  # type: ignore
+except Exception:
+    StructuralSimilarityIndexMeasure = None  # type: ignore
+    _SSIM_AVAILABLE = False
 
 
 def _configure_cuda_toolkit(cuda_path: Optional[str]) -> None:
@@ -174,6 +180,9 @@ def train_scene(
     """Train Gaussian splats on a scene using real COLMAP outputs and frames."""
 
     _configure_cuda_toolkit(config.cuda_toolkit_path or _default_cuda_path())
+    if config.ssim_weight > 0.0 and not _SSIM_AVAILABLE:
+        logger.warning("SSIM requested but torchmetrics is unavailable or failed to import; disabling SSIM.")
+        config = dataclasses.replace(config, ssim_weight=0.0)
     _import_gsplat()
     if config.iterations <= 0:
         raise ValueError("iterations must be positive.")
@@ -944,6 +953,8 @@ _SSIM_METRICS: dict[str, StructuralSimilarityIndexMeasure] = {}
 def _ssim_loss(img_a: torch.Tensor, img_b: torch.Tensor) -> torch.Tensor:
     """Compute SSIM using torchmetrics (expects NHWC input)."""
 
+    if not _SSIM_AVAILABLE or StructuralSimilarityIndexMeasure is None:
+        raise RuntimeError("SSIM not available; torchmetrics failed to import.")
     device = img_a.device
     key = str(device)
     metric = _SSIM_METRICS.get(key)
@@ -972,4 +983,3 @@ def _default_cuda_path() -> str:
     if env_path:
         return env_path
     return r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
-

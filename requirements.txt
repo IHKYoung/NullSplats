@@ -10,3 +10,5 @@ tqdm
 torchmetrics
 PyOpenGL
 pyopengltk
+huggingface-hub==0.34.0
+transformers==4.40.2

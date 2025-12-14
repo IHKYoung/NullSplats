@@ -19,6 +19,7 @@ Tkinter + OpenGL desktop app for training and viewing 3D Gaussian splats from ca
   - `util/` — logging, config, threading helpers.
 - `tools/` — bundled COLMAP binaries and optional CUDA slices (if present).
 - `build.bat` — portable bundle builder (app + venv + tools into `build/NullSplats-portable` and zip).
+- `run.bat` — launcher used inside the portable bundle (uses bundled Python, CUDA, COLMAP).
 - `requirements.txt` — Python dependencies.
 
 ## Requirements
