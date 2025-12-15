@@ -873,12 +873,33 @@ _renders, _alphas, info = rasterization(
 )
 print(json.dumps({{"render_time_ms": float(info.get("render_time_ms", 0.0))}}))
 """
+            env = os.environ.copy()
+            env.setdefault("TORCH_EXTENSIONS_DIR", str(_app_root() / "torch_extensions"))
+            env.setdefault("PYTHONPATH", env.get("PYTHONPATH", ""))
+            env.setdefault("PYTHONNOUSERSITE", "1")
+            env.setdefault("PATH", env.get("PATH", ""))
+            torch_lib = _app_root() / "venv" / "Lib" / "site-packages" / "torch" / "lib"
+            if torch_lib.exists():
+                env["PATH"] = f"{torch_lib};{env['PATH']}"
+            cuda_bin = _app_root() / "cuda" / "bin"
+            if cuda_bin.exists():
+                env["PATH"] = f"{cuda_bin};{env['PATH']}"
+            cuda_lib = _app_root() / "cuda" / "lib" / "x64"
+            if cuda_lib.exists():
+                env["PATH"] = f"{cuda_lib};{env['PATH']}"
             result = subprocess.run(
                 [sys.executable, "-c", script],
                 capture_output=True,
                 text=True,
-                check=True,
+                env=env,
             )
+            if result.returncode != 0:
+                stdout = result.stdout.strip()
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"Warmup subprocess failed (code {result.returncode}). "
+                    f"stdout: {stdout or '<empty>'} | stderr: {stderr or '<empty>'}"
+                )
             return result.stdout.strip()
 
         def _on_success(output: str) -> None:
