@@ -80,21 +80,19 @@ build.bat
 
 Inside the bundle, use `run.bat` to launch; it activates the bundled venv and prepends bundled CUDA and COLMAP paths.
 
+## Known issues:
+
+1. Download is windows + cuda only
+2. Colmap is not built during build process
+3. Download is giant.
+4. Thumbnails fail to load sometimes.
+5. Splat rendering is slightly off
+6. Camera control is not great.
+7. Doesn't include ffmpeg with the build
+8. May need cuda sdk on the path, even though I include it.
+
 ## Paths and defaults
 
 - COLMAP default: bundled `tools/colmap/COLMAP.bat` if present; otherwise user-specified.
 - CUDA default: bundled `cuda/` inside the bundle; otherwise `CUDA_PATH`/`CUDA_HOME`, then `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8`.
 - Cache: created on demand under `cache/inputs` and `cache/outputs`.
-
-## Troubleshooting
-
-- **COLMAP fails / DLL missing**: ensure `tools/colmap` contains `bin` + `lib` DLLs and launch via `run.bat` so PATH is set. Check `cache/outputs/<scene>/sfm/logs/colmap_*.log` inside the bundle.
-- **CUDA not found**: verify PyTorch is a CUDA build and that CUDA DLLs are available (either system install or bundled `cuda/`).
-- **ffmpeg not found**: install ffmpeg and ensure it is on PATH.
-- **Viewer issues**: OpenGL drivers required; update GPU drivers if shader compile fails.
-
-## Contributing
-
-- Keep changes ASCII-friendly; add comments only where non-obvious.
-- Respect the cache layout (`cache/inputs`, `cache/outputs`) and bundled tool paths.
-- Prefer `rg` for searches and keep edits minimal to what’s needed.
