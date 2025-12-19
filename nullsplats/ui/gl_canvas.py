@@ -50,7 +50,7 @@ class SplatData:
 
     means: torch.Tensor
     scales_log: torch.Tensor
-    quats: torch.Tensor
+    quats: torch.Tensor  # (N, 4) in wxyz order for gsplat
     opacities: torch.Tensor
     colors: torch.Tensor  # (N, C, 3) SH coefficients (band-0 then rest)
     sh_degree: int
@@ -106,8 +106,8 @@ class SplatRenderer:
 
         scales_log = _stack_props(raw, ("scale_0", "scale_1", "scale_2"))
         opacities = torch.tensor(raw["opacity"], dtype=torch.float32)
-        quats = _stack_props(raw, ("rot_0", "rot_1", "rot_2", "rot_3"))
-        quats = F.normalize(quats, dim=1)
+        quats_wxyz = _stack_props(raw, ("rot_0", "rot_1", "rot_2", "rot_3"))
+        quats_wxyz = F.normalize(quats_wxyz, dim=1)
         logger.info("Renderer tensors prepared path=%s", path)
 
         center = means.mean(dim=0)
@@ -117,7 +117,7 @@ class SplatRenderer:
         self.data = SplatData(
             means=means.to(self.device),
             scales_log=scales_log.to(self.device),
-            quats=quats.to(self.device),
+            quats=quats_wxyz.to(self.device),
             opacities=opacities.to(self.device),
             colors=torch.cat([dc, sh_rest], dim=1).to(self.device),
             sh_degree=sh_degree,
@@ -604,7 +604,8 @@ class GLCanvas(ttk.Frame):
         try:
             means = data.means.detach().cpu().numpy()
             scales = data.scales_log.detach().cpu().numpy()
-            quats = data.quats.detach().cpu().numpy()
+            quats_wxyz = data.quats.detach().cpu().numpy()
+            quats = np.ascontiguousarray(quats_wxyz[:, [1, 2, 3, 0]])
             opacities = data.opacities.detach().cpu().numpy()
             colors = data.colors.detach().cpu().numpy()
             sh_dc = colors[:, 0, :]

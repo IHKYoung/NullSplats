@@ -22,7 +22,7 @@ void main() {
         discard;
     }
     
-    // Opacity is already in [0,1] from the PLY; apply bias in linear domain.
+    // Opacity is stored in linear [0,1]; apply bias in linear domain.
     float alpha = clamp(splat_opacity + opacity_bias, 0.0, 1.0);
     
     // Check if contribution is negligible

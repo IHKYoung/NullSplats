@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import tkinter as tk
 from pathlib import Path
 import os
@@ -116,13 +115,6 @@ class TrainingTab:
         self.training_preset_var = tk.StringVar(value="low")
         self._warmup_started = False
         self._interactive_controls: list[tk.Widget] = []
-        self._autoplay_job: Optional[str] = None
-        self._last_user_interaction: float = 0.0
-        self._setting_autoplay_pose = False
-        self._pose_list: List[tuple[np.ndarray, np.ndarray]] = []
-        self._pose_idx: int = 0
-        self._autoplay_enabled = tk.BooleanVar(value=True)
-        self._autoplay_interval_var = tk.DoubleVar(value=2.0)
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_bar: Optional[ttk.Progressbar] = None
         self.force_sfm_var = tk.BooleanVar(value=False)
@@ -188,58 +180,33 @@ class TrainingTab:
         preview_shell = ttk.Frame(right_col)
         preview_shell.pack(fill="both", expand=True, padx=10, pady=(10, 8))
 
-        header = ttk.Frame(preview_shell)
-        header.pack(fill="x", pady=(0, 6))
-        ttk.Label(header, text="Live preview (latest checkpoint)", font=("Segoe UI", 11, "bold")).pack(side="left")
-        ttk.Label(header, textvariable=self.preview_status_var, foreground="#444").pack(side="left", padx=(8, 0))
-        ttk.Button(
-            header, text="Refresh now", command=self._refresh_preview_now
-        ).pack(side="right")
+        preview_frame = ttk.LabelFrame(preview_shell, text="Preview")
+        preview_frame.pack(fill="both", expand=True)
+        header = ttk.Frame(preview_frame)
+        header.pack(fill="x", padx=6, pady=(6, 2))
+        ttk.Label(header, textvariable=self.preview_status_var, foreground="#444").pack(side="left")
+        ttk.Button(header, text="Refresh preview", command=self._refresh_preview_now).pack(side="right")
         ttk.Checkbutton(
             header,
             text="Enable live preview polling",
             variable=self._preview_toggle,
             command=self._toggle_preview_poll,
         ).pack(side="right", padx=(0, 8))
-
-        autoplay_row = ttk.Frame(preview_shell)
-        autoplay_row.pack(fill="x", pady=(0, 6))
-        ttk.Checkbutton(
-            autoplay_row,
-            text="Auto camera rotation (uses COLMAP poses when available)",
-            variable=self._autoplay_enabled,
-            command=self._update_autoplay_setting,
-        ).pack(side="left")
-        ttk.Label(autoplay_row, text="Every (s):").pack(side="left", padx=(8, 2))
-        interval_spin = ttk.Spinbox(
-            autoplay_row,
-            from_=0.5,
-            to=30.0,
-            increment=0.5,
-            textvariable=self._autoplay_interval_var,
-            width=6,
-            command=self._update_autoplay_setting,
-        )
-        interval_spin.pack(side="left")
-        self._register_control(interval_spin)
-        ttk.Button(autoplay_row, text="Rotate now", command=lambda: self._autoplay_tick(manual=True)).pack(
-            side="right"
-        )
-
-        preview_frame = ttk.LabelFrame(preview_shell, text="Viewer")
-        preview_frame.pack(fill="both", expand=True)
         preview_inner = ttk.Frame(preview_frame)
         preview_inner.pack(fill="both", expand=True, padx=6, pady=(6, 4))
         self.preview_canvas = GLCanvas(preview_inner, device=self.device_var.get(), width=1200, height=720)
         self.preview_canvas.pack(fill="both", expand=True)
-        try:
-            self.preview_canvas.add_camera_listener(self._on_camera_move)
-        except Exception:
-            pass
 
         notebook = ttk.Notebook(preview_frame)
         notebook.pack(fill="x", padx=6, pady=(0, 6))
-        # Cameras first for faster pose tweaks
+        render_tab = ttk.Frame(notebook)
+        notebook.add(render_tab, text="Render controls")
+        self.preview_controls = RenderSettingsPanel(render_tab, lambda: self.preview_canvas)
+        self.preview_controls.pack(fill="x", padx=4, pady=4)
+        advanced_tab = ttk.Frame(notebook)
+        notebook.add(advanced_tab, text="Advanced")
+        self.preview_advanced_controls = AdvancedRenderSettingsPanel(advanced_tab, lambda: self.preview_canvas)
+        self.preview_advanced_controls.pack(fill="x", padx=4, pady=4)
         camera_tab = ttk.Frame(notebook)
         notebook.add(camera_tab, text="Cameras")
         self.colmap_panel = ColmapCameraPanel(
@@ -248,17 +215,8 @@ class TrainingTab:
             scene_getter=lambda: self.app_state.current_scene_id,
             paths_getter=lambda scene: self.app_state.scene_manager.get(scene).paths,
         )
-        self.colmap_panel.pack(fill="both", expand=True, padx=4, pady=4)
-        render_tab = ttk.Frame(notebook)
-        notebook.add(render_tab, text="Render settings")
-        render_wrap = ttk.Frame(render_tab)
-        render_wrap.pack(fill="both", expand=True, padx=4, pady=4)
-        ttk.Label(render_wrap, text="Viewport", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        self.preview_controls = RenderSettingsPanel(render_wrap, lambda: self.preview_canvas)
-        self.preview_controls.pack(fill="x", padx=(0, 0), pady=(2, 6))
-        ttk.Label(render_wrap, text="Advanced", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 0))
-        self.preview_advanced_controls = AdvancedRenderSettingsPanel(render_wrap, lambda: self.preview_canvas)
-        self.preview_advanced_controls.pack(fill="x", padx=(0, 0), pady=(2, 0))
+        self.colmap_panel.pack(fill="both", expand=True, padx=4, pady=(4, 4))
+        notebook.select(camera_tab)
 
         # --- Left: workflow-focused, minimal primary controls ---
         ttk.Label(left_col, text="Training workflow", font=("Segoe UI", 11, "bold")).pack(
@@ -497,7 +455,6 @@ class TrainingTab:
             self._clear_stale_preview_for_scene()
             self.preview_canvas.start_rendering()
             self._ensure_preview_running()
-            self._schedule_autoplay()
             self._poll_latest_checkpoint(force=True)
         else:
             # Stop polling when hidden, but allow manual refresh when reactivated.
@@ -536,8 +493,6 @@ class TrainingTab:
         self.preview_status_var.set("No checkpoints found yet.")
         self._update_scene_label()
         if scene_id is not None:
-            self._refresh_autoplay_poses(str(scene_id))
-            self._schedule_autoplay()
             if self._tab_active and self._preview_toggle.get():
                 self._toggle_preview_poll(force_on=True)
                 self._poll_latest_checkpoint(force=True)
@@ -573,7 +528,6 @@ class TrainingTab:
                     self.preview_canvas.clear()
                 except Exception:
                     pass
-        self._refresh_autoplay_poses(scene_id)
         sfm_config = SfmConfig(
             colmap_path=self.colmap_path_var.get().strip() or "colmap",
         )
@@ -611,7 +565,6 @@ class TrainingTab:
             self.preview_canvas.start_rendering()
         self._preview_toggle.set(True)
         self._toggle_preview_poll(force_on=True)
-        self._schedule_autoplay()
         self._set_status("Running COLMAP then training...")
         self._reset_progress(indeterminate=True)
         self._working = True
@@ -641,7 +594,6 @@ class TrainingTab:
         sfm_config = SfmConfig(
             colmap_path=self.colmap_path_var.get().strip() or "colmap",
         )
-        self._refresh_autoplay_poses(scene_id)
         self._working = True
         self._set_status("Running COLMAP...")
         self._reset_progress(indeterminate=True)
@@ -700,8 +652,6 @@ class TrainingTab:
             self.preview_canvas.start_rendering()
         self._preview_toggle.set(True)
         self._toggle_preview_poll(force_on=True)
-        self._refresh_autoplay_poses(scene_id)
-        self._schedule_autoplay()
         self._set_status("Training only...")
         self._reset_progress()
         self._working = True
@@ -785,7 +735,6 @@ class TrainingTab:
                     self.preview_canvas.winfo_ismapped(),
                 )
                 self._load_preview(checkpoint_path, allow_when_disabled=True)
-            self._schedule_autoplay()
 
         self.frame.after(0, _update)
 
@@ -800,7 +749,6 @@ class TrainingTab:
             f"SfM + training finished. Last checkpoint: {training_result.last_checkpoint}",
             is_error=False,
         )
-        self._schedule_autoplay()
 
     def _handle_sfm_success(self, sfm_result: SfmResult) -> None:
         self._working = False
@@ -809,7 +757,6 @@ class TrainingTab:
         self._update_scene_label()
         self._set_progress(1.0)
         self._set_status(f"SfM finished. Output: {sfm_result.converted_model_path}", is_error=False)
-        self._schedule_autoplay()
 
     def _handle_error(self, exc: Exception) -> None:
         self._working = False
@@ -1193,146 +1140,3 @@ print(json.dumps({{"render_time_ms": float(info.get("render_time_ms", 0.0))}}))
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         root_logger.addHandler(handler)
         self._log_handler = handler
-
-    def _refresh_autoplay_poses(self, scene_id: str) -> None:
-        try:
-            paths = self.app_state.scene_manager.get(scene_id).paths
-            images_file = self._find_images_file(paths.sfm_dir)
-            if images_file is None:
-                self._pose_list = []
-                return
-            self._pose_list = self._parse_images_file(images_file)
-            self._pose_idx = 0
-        except Exception:  # noqa: BLE001
-            self.logger.debug("Failed to refresh autoplay poses", exc_info=True)
-            self._pose_list = []
-
-    def _find_images_file(self, sfm_dir: Path) -> Optional[Path]:
-        candidates = [
-            sfm_dir / "sparse" / "text" / "images.txt",
-            sfm_dir / "sparse" / "0" / "images.txt",
-            sfm_dir / "sparse" / "images.txt",
-        ]
-        for path in candidates:
-            if path.exists():
-                return path
-        return None
-
-    def _parse_images_file(self, images_file: Path) -> List[tuple[np.ndarray, np.ndarray]]:
-        poses: List[tuple[np.ndarray, np.ndarray]] = []
-        with images_file.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.strip().split()
-                if len(parts) < 10:
-                    continue
-                try:
-                    qw, qx, qy, qz = map(float, parts[1:5])
-                    tx, ty, tz = map(float, parts[5:8])
-                except ValueError:
-                    continue
-                rot_w2c = _quat_to_rotation_matrix_np(np.array([qw, qx, qy, qz], dtype=np.float64))
-                translation = np.array([tx, ty, tz], dtype=np.float64)
-                position = (-rot_w2c.T @ translation).astype(np.float32)
-                poses.append((position, rot_w2c.astype(np.float32)))
-        return poses
-
-    def _autoplay_interval_ms(self) -> int:
-        try:
-            return max(500, int(float(self._autoplay_interval_var.get()) * 1000))
-        except Exception:
-            return 2000
-
-    def _update_autoplay_setting(self) -> None:
-        if self._autoplay_enabled.get():
-            self._schedule_autoplay()
-        else:
-            if self._autoplay_job is not None:
-                try:
-                    self.frame.after_cancel(self._autoplay_job)
-                except Exception:
-                    pass
-                self._autoplay_job = None
-
-    def _schedule_autoplay(self, delay_ms: Optional[int] = None) -> None:
-        if self._autoplay_job is not None:
-            try:
-                self.frame.after_cancel(self._autoplay_job)
-            except Exception:
-                pass
-            self._autoplay_job = None
-        if not self._tab_active or self.preview_canvas is None or not self._autoplay_enabled.get():
-            return
-        wait_ms = delay_ms if delay_ms is not None else self._autoplay_interval_ms()
-        self._autoplay_job = self.frame.after(wait_ms, self._autoplay_tick)
-
-    def _autoplay_tick(self, *, manual: bool = False) -> None:
-        self._autoplay_job = None
-        if not self._tab_active or self.preview_canvas is None:
-            return
-        if not manual and not self._autoplay_enabled.get():
-            return
-        if not manual and (time.monotonic() - self._last_user_interaction) < 5.0:
-            self._schedule_autoplay(1000)
-            return
-        if not self._pose_list:
-            scene_id = self.app_state.current_scene_id
-            if scene_id is not None:
-                self._refresh_autoplay_poses(scene_id)
-            if not self._pose_list:
-                self._spin_camera(self.preview_canvas)
-                self._schedule_autoplay()
-                return
-        pos, rot = self._pose_list[self._pose_idx % len(self._pose_list)]
-        self._pose_idx += 1
-        viewer = self.preview_canvas
-        try:
-            self._setting_autoplay_pose = True
-            viewer.set_camera_pose(pos, rotation=rot)
-        finally:
-            self._setting_autoplay_pose = False
-        viewer.start_rendering()
-        viewer.render_once()
-        if self._autoplay_enabled.get():
-            self._schedule_autoplay()
-
-    def _on_camera_move(self, _view) -> None:
-        if self._setting_autoplay_pose:
-            return
-        self._last_user_interaction = time.monotonic()
-        if self._autoplay_job is not None:
-            try:
-                self.frame.after_cancel(self._autoplay_job)
-            except Exception:
-                pass
-            self._autoplay_job = None
-
-    def _spin_camera(self, viewer: GLCanvas) -> None:
-        """Fallback auto-rotation when COLMAP poses are not available."""
-        view = viewer.get_current_view()
-        if view is None:
-            return
-        viewer.adjust_camera_angles(yaw=view.yaw + math.radians(8.0))
-
-
-def _quat_to_rotation_matrix_np(quat: np.ndarray) -> np.ndarray:
-    """Convert quaternion (w,x,y,z) to 3x3 rotation matrix."""
-    qw, qx, qy, qz = quat
-    xx = qx * qx
-    yy = qy * qy
-    zz = qz * qz
-    xy = qx * qy
-    xz = qx * qz
-    yz = qy * qz
-    wx = qw * qx
-    wy = qw * qy
-    wz = qw * qz
-    return np.array(
-        [
-            [1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy)],
-            [2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx)],
-            [2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)],
-        ],
-        dtype=np.float32,
-    )

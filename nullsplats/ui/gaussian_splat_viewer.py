@@ -137,7 +137,7 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
         self._sorted_indices = None
         self._needs_depth_sort = True
         self._frame_count = 0
-        self._sort_back_to_front = True
+        self._sort_back_to_front = False
         
         if not OPENGL_AVAILABLE:
             super().__init__(parent)
@@ -178,10 +178,8 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             # Set background color
             glClearColor(*self.background_color)
             
-            # Configure depth testing
-            glEnable(GL_DEPTH_TEST)
-            glDepthFunc(GL_LESS)
-            glClearDepth(1.0)
+            # Depth testing is disabled for correct alpha compositing (sorted splats).
+            glDisable(GL_DEPTH_TEST)
             
             # Enable blending for alpha transparency (standard alpha blending)
             glEnable(GL_BLEND)
@@ -818,7 +816,8 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             ], dtype=np.float32)
 
             self.camera.position = self.camera.target + new_offset
-            self.camera.up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            # Match COLMAP/OpenCV camera convention used by set_camera_pose.
+            self.camera.up = np.array([0.0, -1.0, 0.0], dtype=np.float32)
             
             self._last_x = event.x
             self._last_y = event.y
@@ -1019,8 +1018,8 @@ class GaussianSplatViewer(OpenGLFrame if OPENGL_AVAILABLE else tk.Frame):
             final_target = target_pos if target is None else target
             self.camera.set_target_direct(final_target[0], final_target[1], final_target[2])
             
-            # Set camera up vector (camera up is +Y in camera space)
-            up_cam = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            # Set camera up vector (COLMAP/OpenCV is typically Y-down in camera space)
+            up_cam = np.array([0.0, -1.0, 0.0], dtype=np.float32)
             up_world = R_T @ up_cam
             self.camera.up = up_world
             

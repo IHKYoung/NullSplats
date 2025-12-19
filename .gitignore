@@ -13,6 +13,7 @@ dist/
 # Logs and cache
 logs/
 cache/
+tmp/
 
 # VS Code / IDE
 .vscode/

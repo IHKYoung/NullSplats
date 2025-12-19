@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Callable, List, Optional
 
 import numpy as np
@@ -302,7 +303,17 @@ def _parse_images_file(images_file: Path) -> List[ColmapCameraPose]:
                     rotation=rot_world_to_camera.astype(np.float32),
                 )
             )
+    poses.sort(key=_frame_sort_key)
     return poses
+
+
+def _frame_sort_key(pose: ColmapCameraPose) -> tuple:
+    name = pose.name
+    stem = Path(name).stem
+    matches = re.findall(r"(\d+)", stem)
+    if matches:
+        return (0, int(matches[-1]), name)
+    return (1, name, pose.image_id)
 
 
 def _quat_to_rotation_matrix(quat: np.ndarray) -> np.ndarray:
