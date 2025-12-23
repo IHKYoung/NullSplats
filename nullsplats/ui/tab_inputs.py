@@ -25,12 +25,14 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         master: tk.Misc,
         app_state: AppState,
         on_scene_selected: Callable[[str], None],
+        colmap_tab=None,
         training_tab=None,
         exports_tab=None,
         notebook: ttk.Notebook | None = None,
     ) -> None:
         self.app_state = app_state
         self.on_scene_selected = on_scene_selected
+        self.colmap_tab = colmap_tab
         self.training_tab = training_tab
         self.exports_tab = exports_tab
         self.notebook = notebook
@@ -205,8 +207,8 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         self.status_label.pack(side="left", fill="x", expand=True)
         btn_continue = ttk.Button(
             status_row,
-            text="Continue to Training",
-            command=self._go_to_training,
+            text="Continue to COLMAP",
+            command=self._go_to_colmap,
             style="Accent.TButton" if "Accent.TButton" in ttk.Style().element_names() else None,
         )
         btn_continue.pack(side="right", padx=(10, 0))
@@ -526,6 +528,8 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
             except Exception:
                 pass
             self._autosave_job = None
+        if not self._dirty_selection:
+            return
         scene_id = self._require_scene()
         if scene_id is None:
             return
@@ -616,9 +620,9 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         self._set_busy_ui(False)
         if self._pending_nav_to_training:
             self._pending_nav_to_training = False
-            self._navigate_to_training_tab()
+            self._navigate_to_colmap_tab()
 
-    def _go_to_training(self) -> None:
+    def _go_to_colmap(self) -> None:
         if self._extracting:
             self._set_status("Wait for extraction to finish before continuing.", is_error=True)
             return
@@ -638,7 +642,7 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         if not self._dirty_selection and not self._saving:
             # Nothing to save; go now.
             self._pending_nav_to_training = False
-            self._navigate_to_training_tab()
+            self._navigate_to_colmap_tab()
 
 
 
@@ -650,7 +654,7 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
 
 
 
-    def _navigate_to_training_tab(self) -> None:
+    def _navigate_to_colmap_tab(self) -> None:
         target_notebook = self.notebook or self.frame.master
         try:
             target_notebook.select(1)

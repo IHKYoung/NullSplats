@@ -177,8 +177,18 @@ def load_cached_frames(scene_id: str | SceneId, cache_root: str | Path = "cache"
     ]
     frame_scores = _score_with_quality(frame_scores)
     selected_frames = metadata.get("selected_frames", [])
+    if not selected_frames:
+        selected_frames = sorted(
+            [
+                path.name
+                for path in paths.frames_selected_dir.iterdir()
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}
+            ]
+        )
     candidate_count = int(metadata.get("candidate_count", len(available_frames)))
     target_count = int(metadata.get("target_count", len(selected_frames)))
+    if target_count <= 0 and selected_frames:
+        target_count = len(selected_frames)
 
     missing = [name for name in available_frames if not (paths.frames_all_dir / name).exists()]
     if missing:

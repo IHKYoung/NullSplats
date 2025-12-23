@@ -45,14 +45,19 @@ class WizardWindow(tk.Toplevel):
             paths = self.app_state.scene_manager.get(scene).paths
             return paths.frames_selected_dir.exists() and any(paths.frames_selected_dir.iterdir())
 
+        def require_colmap() -> bool:
+            scene = self.app_state.current_scene_id
+            if scene is None:
+                return False
+            paths = self.app_state.scene_manager.get(scene).paths
+            return paths.sfm_dir.exists() and any(paths.sfm_dir.iterdir())
+
         def require_training() -> bool:
             scene = self.app_state.current_scene_id
             if scene is None:
                 return False
             paths = self.app_state.scene_manager.get(scene).paths
-            has_sfm = paths.sfm_dir.exists() and any(paths.sfm_dir.iterdir())
-            has_splats = paths.splats_dir.exists() and any(paths.splats_dir.iterdir())
-            return has_sfm and has_splats
+            return paths.splats_dir.exists() and any(paths.splats_dir.iterdir())
 
         def require_exports() -> bool:
             scene = self.app_state.current_scene_id
@@ -69,16 +74,22 @@ class WizardWindow(tk.Toplevel):
                 lambda: self._go_tab(0),
             ),
             WizardStep(
-                "Step 2: Training",
-                "Run COLMAP and training for the active scene. Watch preview while training.",
-                require_training,
+                "Step 2: COLMAP",
+                "Run COLMAP to compute camera poses for the active scene.",
+                require_colmap,
                 lambda: self._go_tab(1),
             ),
             WizardStep(
-                "Step 3: Exports",
+                "Step 3: Training",
+                "Train Gaussian splats for the active scene. Watch preview while training.",
+                require_training,
+                lambda: self._go_tab(2),
+            ),
+            WizardStep(
+                "Step 4: Exports",
                 "Preview checkpoints and export .ply or renders for the active scene.",
                 require_exports,
-                lambda: self._go_tab(2),
+                lambda: self._go_tab(3),
             ),
         ]
 
@@ -171,7 +182,7 @@ class WizardWindow(tk.Toplevel):
     def _update_listbox_labels(self) -> None:
         self.listbox.delete(0, tk.END)
         for idx, step in enumerate(self.steps):
-            prefix = "✔ " if step.status == "complete" else "• "
+            prefix = "OK " if step.status == "complete" else " - "
             self.listbox.insert(tk.END, f"{prefix}{step.title}")
         self.listbox.selection_set(self.current_idx)
 
@@ -188,6 +199,7 @@ class GuidedWizard(tk.Toplevel):
         app_state: AppState,
         *,
         inputs_tab,
+        colmap_tab,
         training_tab,
         exports_tab,
         notebook,
@@ -197,6 +209,7 @@ class GuidedWizard(tk.Toplevel):
         self.geometry("820x640")
         self.app_state = app_state
         self.inputs_tab = inputs_tab
+        self.colmap_tab = colmap_tab
         self.training_tab = training_tab
         self.exports_tab = exports_tab
         self.notebook = notebook
@@ -220,7 +233,7 @@ class GuidedWizard(tk.Toplevel):
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         ttk.Label(header, text="Guided flow", font=("Segoe UI", 12, "bold")).pack(side="left")
-        self.step_label = ttk.Label(header, text="Step 1 of 3")
+        self.step_label = ttk.Label(header, text="Step 1 of 4")
         self.step_label.pack(side="right")
 
         self.card_frame = ttk.Frame(self)
@@ -232,7 +245,12 @@ class GuidedWizard(tk.Toplevel):
         ttk.Button(footer, text="Back", command=self._prev_step).pack(side="left")
         ttk.Button(footer, text="Next", command=self._next_step).pack(side="right")
 
-        self.cards: list[ttk.Frame] = [self._build_step_inputs(), self._build_step_training(), self._build_step_exports()]
+        self.cards: list[ttk.Frame] = [
+            self._build_step_inputs(),
+            self._build_step_colmap(),
+            self._build_step_training(),
+            self._build_step_exports(),
+        ]
         for card in self.cards:
             card.grid(row=0, column=0, sticky="nsew")
         self._show_step(0)
@@ -261,6 +279,19 @@ class GuidedWizard(tk.Toplevel):
         )
         return frame
 
+    def _build_step_colmap(self) -> ttk.Frame:
+        frame = ttk.LabelFrame(self.card_frame, text="COLMAP")
+        ttk.Label(
+            frame,
+            text="Run COLMAP to compute camera poses for the active scene before training.",
+            wraplength=540,
+            justify="left",
+        ).pack(anchor="w", padx=6, pady=(6, 4))
+        ttk.Button(frame, text="Run COLMAP", command=self._run_colmap_and_continue).pack(
+            anchor="w", padx=6, pady=(6, 6)
+        )
+        return frame
+
     def _build_step_training(self) -> ttk.Frame:
         frame = ttk.LabelFrame(self.card_frame, text="Training")
         row = ttk.Frame(frame)
@@ -279,7 +310,7 @@ class GuidedWizard(tk.Toplevel):
             wraplength=540,
             justify="left",
         ).pack(anchor="w", padx=6, pady=6)
-        ttk.Button(frame, text="Open Exports tab", command=lambda: self._select_tab(2)).pack(anchor="w", padx=6, pady=(4, 6))
+        ttk.Button(frame, text="Open Exports tab", command=lambda: self._select_tab(3)).pack(anchor="w", padx=6, pady=(4, 6))
         return frame
 
     def _show_step(self, idx: int) -> None:
@@ -288,7 +319,7 @@ class GuidedWizard(tk.Toplevel):
             if i == idx:
                 card.grid()
         self.current_step = idx
-        self.step_label.config(text=f"Step {idx + 1} of 3")
+        self.step_label.config(text=f"Step {idx + 1} of {len(self.cards)}")
 
     def _next_step(self) -> None:
         if self.current_step < len(self.cards) - 1:
@@ -338,12 +369,29 @@ class GuidedWizard(tk.Toplevel):
         self._select_tab(1)
         self._show_step(1)
 
+    def _run_colmap_and_continue(self) -> None:
+        if self.colmap_tab is None:
+            self._show_step(2)
+            return
+        try:
+            self.colmap_tab.run_sfm()
+            self.after(1000, self._wait_for_colmap)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Wizard", f"COLMAP failed: {exc}", parent=self)
+
+    def _wait_for_colmap(self) -> None:
+        if self.colmap_tab is not None and self.colmap_tab.is_working():
+            self.after(1000, self._wait_for_colmap)
+            return
+        self._select_tab(2)
+        self._show_step(2)
+
     def _train_and_continue(self) -> None:
         if self.training_tab is None:
             return
         try:
             self.training_tab.apply_training_preset(self.preset_var.get())
-            self.training_tab.run_pipeline()
+            self.training_tab.run_training()
             self.after(1000, self._wait_for_training)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Wizard", f"Training failed: {exc}", parent=self)
@@ -358,5 +406,5 @@ class GuidedWizard(tk.Toplevel):
                 self.exports_tab._load_checkpoints()
             except Exception:
                 pass
-        self._select_tab(2)
-        self._show_step(2)
+        self._select_tab(3)
+        self._show_step(3)

@@ -141,7 +141,8 @@ class ExportsTab:
             # Only spin up the renderer when the tab is visible.
             self.logger.debug("Exports tab selected; pending preview=%s", self._pending_preview_path)
             if self._pending_preview_path:
-                self._start_preview(self._pending_preview_path)
+                pending = self._pending_preview_path
+                self.frame.after(150, lambda path=pending: self._start_preview(path))
         else:
             self.logger.debug("Exports tab hidden; stopping renderer")
             self.viewer.stop_rendering()
@@ -211,6 +212,8 @@ class ExportsTab:
 
     def _start_preview(self, checkpoint: Path, *, retry: bool = True) -> None:
         """Start rendering/preview after ensuring the viewer is mapped."""
+        if not self._tab_active:
+            return
         if self.viewer is None:
             return
         if not self.viewer.winfo_ismapped():

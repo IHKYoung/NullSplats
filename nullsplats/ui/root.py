@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from nullsplats.app_state import AppState
+from nullsplats.ui.tab_colmap import ColmapTab
 from nullsplats.ui.tab_exports import ExportsTab
 from nullsplats.ui.wizard import WizardWindow
 from nullsplats.ui.tab_inputs import InputsTab
@@ -62,6 +63,7 @@ def _build_menubar(root: tk.Tk, app_state: AppState, notebook: ttk.Notebook) -> 
 def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> ttk.Notebook:
     notebook = ttk.Notebook(root)
 
+    colmap_tab = ColmapTab(notebook, app_state)
     training_tab = TrainingTab(notebook, app_state)
     exports_tab = ExportsTab(notebook, app_state)
     # _on_scene_selected needs to be defined after inputs_tab is created; use a placeholder and update later.
@@ -70,6 +72,7 @@ def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> t
         notebook,
         app_state,
         on_scene_selected=placeholder_callback,
+        colmap_tab=colmap_tab,
         training_tab=training_tab,
         exports_tab=exports_tab,
         notebook=notebook,
@@ -77,6 +80,7 @@ def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> t
 
     def _on_scene_selected(scene_id: str) -> None:
         status_var.set(f"Active scene: {scene_id}")
+        colmap_tab.on_scene_changed(scene_id)
         training_tab.on_scene_changed(scene_id)
         exports_tab.on_scene_changed(scene_id)
         try:
@@ -87,6 +91,7 @@ def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> t
     inputs_tab.on_scene_selected = _on_scene_selected  # type: ignore[attr-defined]
 
     notebook.add(inputs_tab.frame, text="Inputs")
+    notebook.add(colmap_tab.frame, text="COLMAP")
     notebook.add(training_tab.frame, text="Training")
     notebook.add(exports_tab.frame, text="Exports")
 
@@ -109,12 +114,16 @@ def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> t
             return
         last_idx = current
         inputs_tab.on_tab_selected(current == 0)
-        training_tab.on_tab_selected(current == 1)
-        exports_tab.on_tab_selected(current == 2)
-        if current == 2:
+        colmap_tab.on_tab_selected(current == 1)
+        training_tab.on_tab_selected(current == 2)
+        if current == 3:
+            # Ensure training preview is fully halted before Exports GL context is active.
+            training_tab.deactivate_viewer()
+        exports_tab.on_tab_selected(current == 3)
+        if current == 3:
             # Ensure training preview is fully halted while Exports GL context is active.
             training_tab.deactivate_viewer()
-        elif current == 1:
+        elif current == 2:
             # Likewise, halt the exports viewer while Training is active.
             exports_tab.deactivate_viewer()
 

@@ -94,6 +94,13 @@ class TrainingTabLayoutMixin:
         self.scene_status_label.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Label(
             scene_card,
+            textvariable=self.sfm_hint_var,
+            anchor="w",
+            justify="left",
+            foreground="#666",
+        ).pack(fill="x", padx=6, pady=(0, 6))
+        ttk.Label(
+            scene_card,
             text="Set scenes in Inputs tab; selecting a scene there auto-loads cached checkpoints for preview.",
             foreground="#666",
             wraplength=380,
@@ -111,7 +118,7 @@ class TrainingTabLayoutMixin:
         self.progress_bar.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Label(
             status_card,
-            text="Run COLMAP, training, or both. Preview updates while training.",
+            text="Run training after COLMAP completes. Preview updates while training.",
             foreground="#666",
             wraplength=380,
             anchor="w",
@@ -119,15 +126,9 @@ class TrainingTabLayoutMixin:
         ).pack(fill="x", padx=6, pady=(0, 4))
         primary_row = ttk.Frame(status_card)
         primary_row.pack(fill="x", padx=6, pady=(0, 6))
-        btn_run = ttk.Button(primary_row, text="Run COLMAP + Train", command=self._run_pipeline)
-        btn_run.pack(side="left")
-        self._register_control(btn_run)
-        btn_train_only = ttk.Button(primary_row, text="Train only", command=self._run_training_only)
-        btn_train_only.pack(side="left", padx=(6, 0))
+        btn_train_only = ttk.Button(primary_row, text="Run training", command=self._run_training_only)
+        btn_train_only.pack(side="left")
         self._register_control(btn_train_only)
-        btn_sfm_only = ttk.Button(primary_row, text="Run COLMAP only", command=self._run_sfm_only)
-        btn_sfm_only.pack(side="left", padx=(6, 0))
-        self._register_control(btn_sfm_only)
         btn_warm = ttk.Button(primary_row, text="Warm up renderer", command=self._warmup_renderer)
         btn_warm.pack(side="right")
         self._register_control(btn_warm)
@@ -166,23 +167,15 @@ class TrainingTabLayoutMixin:
         ttk.Spinbox(core_row2, from_=1, to=16, textvariable=self.batch_size_var, width=6).pack(side="left", padx=(4, 12))
         ttk.Label(core_row2, text="Export format:").pack(side="left")
         ttk.Combobox(core_row2, textvariable=self.export_format_var, values=("ply", "splat"), width=8).pack(side="left", padx=(4, 12))
-        ttk.Checkbutton(core_row2, text="Re-run COLMAP from scratch", variable=self.force_sfm_var).pack(side="left")
 
         # Advanced controls tucked away
-        sfm_body = self._collapsible_section(left_col, "Structure-from-Motion (COLMAP)", start_hidden=True)
-        path_row = ttk.Frame(sfm_body)
-        path_row.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Label(path_row, text="COLMAP path:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(path_row, textvariable=self.colmap_path_var, width=32).grid(row=0, column=1, sticky="ew", padx=(4, 8))
-        ttk.Label(path_row, text="CUDA toolkit path:").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(path_row, textvariable=self.cuda_path_var, width=32).grid(
-            row=1, column=1, sticky="ew", padx=(4, 8), pady=(4, 0)
-        )
-        path_row.columnconfigure(1, weight=1)
-
         training_body = self._collapsible_section(left_col, "Training config (advanced)", start_hidden=True)
+        path_row = ttk.Frame(training_body)
+        path_row.pack(fill="x", padx=6, pady=(6, 4))
+        ttk.Label(path_row, text="CUDA toolkit path:").pack(side="left")
+        ttk.Entry(path_row, textvariable=self.cuda_path_var, width=32).pack(side="left", padx=(4, 0), fill="x", expand=True)
         row1 = ttk.Frame(training_body)
-        row1.pack(fill="x", padx=6, pady=(6, 4))
+        row1.pack(fill="x", padx=6, pady=(0, 4))
         ttk.Label(row1, text="Max points (0=all):").pack(side="left")
         ttk.Spinbox(row1, from_=0, to=2_000_000, textvariable=self.max_points_var, width=12).pack(side="left", padx=(4, 12))
         ttk.Label(row1, text="Image downscale:").pack(side="left")

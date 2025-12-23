@@ -7,16 +7,14 @@ import tkinter as tk
 from pathlib import Path
 import os
 import queue
-import shutil
 import subprocess
 import sys
 from tkinter import scrolledtext, ttk
-from typing import Optional, Tuple
+from typing import Optional
 from nullsplats.app_state import AppState
-from nullsplats.backend.sfm_pipeline import SfmConfig, SfmResult, run_sfm
 from nullsplats.backend.splat_train import PreviewPayload, SplatTrainingConfig, TrainingResult, train_scene
 from nullsplats.util.logging import get_logger
-from nullsplats.util.tooling_paths import app_root, default_colmap_path, default_cuda_path
+from nullsplats.util.tooling_paths import app_root, default_cuda_path
 from nullsplats.util.threading import run_in_background
 from nullsplats.ui.gl_canvas import GLCanvas
 from nullsplats.ui.tab_training_layout import TrainingTabLayoutMixin
@@ -24,7 +22,7 @@ from nullsplats.ui.tab_training_preview import TrainingTabPreviewMixin
 
 
 class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
-    """Training tab with SfM and training controls."""
+    """Training tab with training controls."""
 
     def __init__(self, master: tk.Misc, app_state: AppState) -> None:
         self.app_state = app_state
@@ -33,9 +31,9 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         self.frame = ttk.Frame(master)
 
         default_cfg = SplatTrainingConfig()
-        self.status_var = tk.StringVar(value="Configure SfM and training, then run.")
+        self.status_var = tk.StringVar(value="Configure training, then run.")
         self.preview_status_var = tk.StringVar(value="Viewer idle.")
-        self.colmap_path_var = tk.StringVar(value=default_colmap_path())
+        self.sfm_hint_var = tk.StringVar(value="")
         self.cuda_path_var = tk.StringVar(value=default_cuda_path())
         self.iterations_var = tk.IntVar(value=default_cfg.iterations)
         self.snapshot_var = tk.IntVar(value=default_cfg.snapshot_interval)
@@ -85,12 +83,11 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         self._preview_toggle_before_sfm = True
         self._in_memory_preview_active = False
         self._tab_active = False
-        self.training_preset_var = tk.StringVar(value="low")
+        self.training_preset_var = tk.StringVar(value="medium")
         self._warmup_started = False
         self._interactive_controls: list[tk.Widget] = []
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_bar: Optional[ttk.Progressbar] = None
-        self.force_sfm_var = tk.BooleanVar(value=False)
 
         self._build_contents()
         self._apply_training_preset()  # default to medium preset settings
@@ -123,19 +120,26 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
             if status is None:
                 return "Scene status unknown."
             parts = [
-                f"Inputs {'✓' if status.has_inputs else '–'}",
-                f"SfM {'✓' if status.has_sfm else '–'}",
-                f"Splats {'✓' if status.has_splats else '–'}",
+                f"Inputs {'OK' if status.has_inputs else '--'}",
+                f"SfM {'OK' if status.has_sfm else '--'}",
+                f"Splats {'OK' if status.has_splats else '--'}",
             ]
-            return " • ".join(parts)
+            return " > ".join(parts)
         except Exception:  # noqa: BLE001
             return "Scene status unavailable."
+
+    def _sfm_hint_text(self) -> str:
+        scene = self.app_state.current_scene_id
+        if scene is None:
+            return "SfM: no active scene selected."
+        return "SfM: ready." if self._has_sfm_outputs(str(scene)) else "SfM: missing. Run COLMAP in the COLMAP tab first."
 
     def on_tab_selected(self, selected: bool) -> None:
         self._tab_active = selected
         if not self.preview_canvas:
             return
         if selected:
+            self._update_scene_label()
             if self._preview_paused_for_sfm:
                 return
             if not self._warmup_started:
@@ -199,105 +203,7 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
             self.scene_label.config(text=self._scene_text())
         if self.scene_status_label is not None:
             self.scene_status_label.config(text=self._scene_status_text())
-
-    def _run_pipeline(self) -> None:
-        if self._working:
-            self._set_status("Another operation is running; wait for it to finish.", is_error=True)
-            return
-        self._apply_training_preset()
-        scene_id = self._require_scene()
-        if scene_id is None:
-            return
-        if self.force_sfm_var.get():
-            if not self._clear_outputs(scene_id):
-                return
-        else:
-            self._last_preview_path = None
-            if self.preview_canvas is not None:
-                try:
-                    self.preview_canvas.clear()
-                except Exception:
-                    pass
-        sfm_config = SfmConfig(
-            colmap_path=self.colmap_path_var.get().strip() or "colmap",
-        )
-        train_config = SplatTrainingConfig(
-            cuda_toolkit_path=self.cuda_path_var.get().strip() or SplatTrainingConfig().cuda_toolkit_path,
-            iterations=int(self.iterations_var.get()),
-            snapshot_interval=int(self.snapshot_var.get()),
-            max_points=int(self.max_points_var.get()),
-            export_format=self.export_format_var.get().strip() or "ply",
-            device=self.device_var.get().strip() or "cuda:0",
-            image_downscale=int(self.image_downscale_var.get()),
-            batch_size=int(self.batch_size_var.get()),
-            sh_degree=int(self.sh_degree_var.get()),
-            sh_degree_interval=int(self.sh_interval_var.get()),
-            init_scale=float(self.init_scale_var.get()),
-            min_scale=float(self.min_scale_var.get()),
-            max_scale=float(self.max_scale_var.get()),
-            opacity_bias=float(self.opacity_bias_var.get()),
-            random_background=bool(self.random_background_var.get()),
-            means_lr=float(self.means_lr_var.get()),
-            scales_lr=float(self.scales_lr_var.get()),
-            opacities_lr=float(self.opacities_lr_var.get()),
-            sh_lr=float(self.sh_lr_var.get()),
-            lr_final_scale=float(self.lr_final_scale_var.get()),
-            densify_start=int(self.densify_start_var.get()),
-            densify_interval=int(self.densify_interval_var.get()),
-            densify_opacity_threshold=float(self.densify_opacity_var.get()),
-            densify_scale_threshold=float(self.densify_scale_var.get()),
-            prune_opacity_threshold=float(self.prune_opacity_var.get()),
-            prune_scale_threshold=float(self.prune_scale_var.get()),
-            densify_max_points=int(self.densify_max_points_var.get()),
-            preview_interval_seconds=float(self.preview_interval_var.get()),
-            preview_min_iters=int(self.preview_min_iters_var.get()),
-            max_preview_points=int(self.preview_max_points_var.get()),
-        )
-        self._pause_preview_for_sfm()
-        self._in_memory_preview_active = True
-        self._set_status("Running COLMAP then training...")
-        self._reset_progress(indeterminate=True)
-        self._working = True
-        self._set_controls_enabled(False)
-
-        run_in_background(
-            self._execute_pipeline,
-            scene_id,
-            sfm_config,
-            train_config,
-            tk_root=self.frame.winfo_toplevel(),
-            on_success=self._handle_pipeline_success,
-            on_error=self._handle_error,
-            thread_name=f"sfm_train_{scene_id}",
-        )
-
-    def _run_sfm_only(self) -> None:
-        if self._working:
-            self._set_status("Another operation is running; wait for it to finish.", is_error=True)
-            return
-        scene_id = self._require_scene()
-        if scene_id is None:
-            return
-        if self.force_sfm_var.get():
-            if not self._clear_outputs(scene_id):
-                return
-        sfm_config = SfmConfig(
-            colmap_path=self.colmap_path_var.get().strip() or "colmap",
-        )
-        self._pause_preview_for_sfm()
-        self._working = True
-        self._set_status("Running COLMAP...")
-        self._reset_progress(indeterminate=True)
-        self._set_controls_enabled(False)
-        run_in_background(
-            self._execute_sfm,
-            scene_id,
-            sfm_config,
-            tk_root=self.frame.winfo_toplevel(),
-            on_success=self._handle_sfm_success,
-            on_error=self._handle_error,
-            thread_name=f"sfm_only_{scene_id}",
-        )
+        self.sfm_hint_var.set(self._sfm_hint_text())
 
     def _run_training_only(self) -> None:
         if self._working:
@@ -356,34 +262,10 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
             scene_id,
             train_config,
             tk_root=self.frame.winfo_toplevel(),
-            on_success=lambda result: self._handle_pipeline_success((None, result)),
+            on_success=self._handle_training_success,
             on_error=self._handle_error,
             thread_name=f"train_only_{scene_id}",
         )
-
-    def _execute_pipeline(
-        self, scene_id: str, sfm_config: SfmConfig, train_config: SplatTrainingConfig
-    ) -> Tuple[SfmResult, TrainingResult]:
-        sfm_result = run_sfm(
-            scene_id,
-            config=sfm_config,
-            cache_root=self.app_state.config.cache_root,
-        )
-        self.frame.after(0, self._resume_preview_after_sfm)
-        training_result = train_scene(
-            scene_id,
-            train_config,
-            cache_root=self.app_state.config.cache_root,
-            progress_callback=self._report_progress,
-            checkpoint_callback=self._handle_checkpoint,
-            preview_callback=self._handle_preview_payload,
-        )
-        return sfm_result, training_result
-
-    def _execute_sfm(self, scene_id: str, sfm_config: SfmConfig) -> SfmResult:
-        result = run_sfm(scene_id, config=sfm_config, cache_root=self.app_state.config.cache_root)
-        self.frame.after(0, self._resume_preview_after_sfm)
-        return result
 
     def _execute_training(self, scene_id: str, train_config: SplatTrainingConfig) -> TrainingResult:
         return train_scene(
@@ -438,8 +320,7 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
 
         self.frame.after(0, _update)
 
-    def _handle_pipeline_success(self, result: Tuple[SfmResult | None, TrainingResult]) -> None:
-        _sfm_result, training_result = result
+    def _handle_training_success(self, training_result: TrainingResult) -> None:
         self._working = False
         self._in_memory_preview_active = False
         self._set_controls_enabled(True)
@@ -447,18 +328,9 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         self._update_scene_label()
         self._set_progress(1.0)
         self._set_status(
-            f"SfM + training finished. Last checkpoint: {training_result.last_checkpoint}",
+            f"Training finished. Last checkpoint: {training_result.last_checkpoint}",
             is_error=False,
         )
-
-    def _handle_sfm_success(self, sfm_result: SfmResult) -> None:
-        self._working = False
-        self._in_memory_preview_active = False
-        self._set_controls_enabled(True)
-        self.app_state.refresh_scene_status()
-        self._update_scene_label()
-        self._set_progress(1.0)
-        self._set_status(f"SfM finished. Output: {sfm_result.converted_model_path}", is_error=False)
 
     def _handle_error(self, exc: Exception) -> None:
         self._working = False
@@ -473,8 +345,8 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
             self.training_preset_var.set(preset)
         self._apply_training_preset()
 
-    def run_pipeline(self) -> None:
-        self._run_pipeline()
+    def run_training(self) -> None:
+        self._run_training_only()
 
     def is_working(self) -> bool:
         return self._working
@@ -615,21 +487,6 @@ print(json.dumps({{"render_time_ms": float(info.get("render_time_ms", 0.0))}}))
             paths.sfm_dir / "sparse" / "images.txt",
         ]
         return any(path.exists() for path in candidates)
-
-    def _clear_outputs(self, scene_id: str) -> bool:
-        try:
-            paths = self.app_state.scene_manager.get(scene_id).paths
-            if paths.outputs_root.exists():
-                shutil.rmtree(paths.outputs_root)
-            self.logger.info("Cleared outputs for scene=%s at %s", scene_id, paths.outputs_root)
-            self._last_preview_path = None
-            if self.preview_canvas is not None:
-                self.preview_canvas.clear()
-            return True
-        except Exception as exc:  # noqa: BLE001
-            self.logger.exception("Failed to clear outputs for scene %s", scene_id)
-            self._set_status(f"Failed to clear outputs: {exc}", is_error=True)
-            return False
 
     def _attach_log_handler(self) -> None:
         if self.log_view is None:

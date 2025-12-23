@@ -11,10 +11,13 @@ class InputsTabWizardMixin:
     def _start_inline_wizard(self) -> None:
         if self._wizard_running:
             return
-        params = self._wizard_prompt_inputs()
+        params = self._wizard_prompt_settings()
         if params is None:
             return
         self._wizard_running = True
+        self._wizard_preset = params["preset"]
+        self._wizard_colmap_matcher = params["colmap_matcher"]
+        self._wizard_colmap_camera_model = params["colmap_camera_model"]
         self.source_type_var.set(params["source_type"])
         if params["source_type"] == "video":
             self.video_path_var.set(params["video_path"])
@@ -44,16 +47,42 @@ class InputsTabWizardMixin:
                 self.notebook.select(1)
             except Exception:
                 pass
-        preset = self._wizard_prompt_preset()
-        if preset and self.training_tab is not None:
+        if self.colmap_tab is not None:
             try:
-                self.training_tab.apply_training_preset(preset)
-                self.training_tab.run_pipeline()
-                self.frame.after(1000, self._wizard_wait_for_training)
+                if hasattr(self, "_wizard_colmap_matcher"):
+                    self.colmap_tab.matcher_var.set(self._wizard_colmap_matcher)
+                if hasattr(self, "_wizard_colmap_camera_model"):
+                    self.colmap_tab.camera_model_var.set(self._wizard_colmap_camera_model)
+                self.colmap_tab.run_sfm()
+                self.frame.after(1000, self._wizard_wait_for_sfm)
             except Exception as exc:  # noqa: BLE001
-                messagebox.showerror("Wizard", f"Training failed: {exc}", parent=self.frame.winfo_toplevel())
+                messagebox.showerror("Wizard", f"COLMAP failed: {exc}", parent=self.frame.winfo_toplevel())
                 self._wizard_running = False
         else:
+            self._wizard_start_training()
+
+    def _wizard_wait_for_sfm(self) -> None:
+        if self.colmap_tab is not None and self.colmap_tab.is_working():
+            self.frame.after(1000, self._wizard_wait_for_sfm)
+            return
+        self._wizard_start_training()
+
+    def _wizard_start_training(self) -> None:
+        preset = getattr(self, "_wizard_preset", None)
+        if not preset or self.training_tab is None:
+            self._wizard_running = False
+            return
+        if self.notebook is not None:
+            try:
+                self.notebook.select(2)
+            except Exception:
+                pass
+        try:
+            self.training_tab.apply_training_preset(preset)
+            self.training_tab.run_training()
+            self.frame.after(1000, self._wizard_wait_for_training)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Wizard", f"Training failed: {exc}", parent=self.frame.winfo_toplevel())
             self._wizard_running = False
 
     def _wizard_wait_for_training(self) -> None:
@@ -67,15 +96,15 @@ class InputsTabWizardMixin:
                 pass
         if self.notebook is not None:
             try:
-                self.notebook.select(2)
+                self.notebook.select(3)
             except Exception:
                 pass
         self._wizard_finish_exports()
         self._wizard_running = False
 
-    def _wizard_prompt_inputs(self) -> dict | None:
+    def _wizard_prompt_settings(self) -> dict | None:
         dialog = tk.Toplevel(self.frame)
-        dialog.title("Wizard: Inputs")
+        dialog.title("Wizard: Inputs + Training preset")
         dialog.transient(self.frame.winfo_toplevel())
         dialog.grab_set()
         self._center_dialog(dialog)
@@ -88,6 +117,9 @@ class InputsTabWizardMixin:
         target_var = tk.IntVar(value=self.target_var.get())
         res_var = tk.IntVar(value=self.training_resolution_var.get())
         mode_var = tk.StringVar(value=self.training_resample_var.get())
+        preset_var = tk.StringVar(value="medium")
+        matcher_var = tk.StringVar(value="exhaustive")
+        camera_model_var = tk.StringVar(value="PINHOLE")
 
         dialog.columnconfigure(1, weight=1)
         ttk.Radiobutton(dialog, text="Video", variable=source_type, value="video").grid(row=0, column=0, sticky="w", padx=8, pady=4)
@@ -110,6 +142,32 @@ class InputsTabWizardMixin:
         ttk.Combobox(row3, values=[720, 1080, 2160], textvariable=res_var, state="readonly", width=10).pack(side="left", padx=(4, 6))
         ttk.Combobox(row3, values=["lanczos", "bicubic", "bilinear", "nearest"], textvariable=mode_var, state="readonly", width=10).pack(side="left")
 
+        row4 = ttk.Frame(dialog)
+        row4.grid(row=4, column=0, columnspan=3, sticky="w", padx=8, pady=(8, 4))
+        ttk.Label(row4, text="Training preset").pack(side="left")
+        ttk.Combobox(row4, values=["low", "medium", "high"], textvariable=preset_var, state="readonly", width=10).pack(
+            side="left", padx=(4, 0)
+        )
+
+        row5 = ttk.Frame(dialog)
+        row5.grid(row=5, column=0, columnspan=3, sticky="w", padx=8, pady=(8, 4))
+        ttk.Label(row5, text="COLMAP matcher").pack(side="left")
+        ttk.Combobox(
+            row5,
+            values=["exhaustive", "sequential", "spatial"],
+            textvariable=matcher_var,
+            state="readonly",
+            width=12,
+        ).pack(side="left", padx=(4, 12))
+        ttk.Label(row5, text="Camera model").pack(side="left")
+        ttk.Combobox(
+            row5,
+            values=["PINHOLE", "SIMPLE_PINHOLE", "OPENCV"],
+            textvariable=camera_model_var,
+            state="readonly",
+            width=14,
+        ).pack(side="left", padx=(4, 0))
+
         def _ok() -> None:
             nonlocal result
             path = video_var.get().strip() if source_type.get() == "video" else folder_var.get().strip()
@@ -124,6 +182,9 @@ class InputsTabWizardMixin:
                 "target": max(1, int(target_var.get())),
                 "resolution": max(1, int(res_var.get())),
                 "mode": mode_var.get(),
+                "preset": preset_var.get(),
+                "colmap_matcher": matcher_var.get(),
+                "colmap_camera_model": camera_model_var.get(),
             }
             dialog.destroy()
 
@@ -131,7 +192,7 @@ class InputsTabWizardMixin:
             dialog.destroy()
 
         btn_row = ttk.Frame(dialog)
-        btn_row.grid(row=4, column=0, columnspan=3, sticky="e", padx=8, pady=(8, 8))
+        btn_row.grid(row=6, column=0, columnspan=3, sticky="e", padx=8, pady=(8, 8))
         ttk.Button(btn_row, text="Cancel", command=_cancel).pack(side="right", padx=(6, 0))
         ttk.Button(btn_row, text="OK", command=_ok).pack(side="right")
 
@@ -151,33 +212,6 @@ class InputsTabWizardMixin:
         path = filedialog.askdirectory(parent=self.frame.winfo_toplevel(), title="Select image folder")
         if path:
             var.set(path)
-
-    def _wizard_prompt_preset(self) -> str | None:
-        dialog = tk.Toplevel(self.frame)
-        dialog.title("Wizard: Training preset")
-        dialog.transient(self.frame.winfo_toplevel())
-        dialog.grab_set()
-        self._center_dialog(dialog)
-        preset_var = tk.StringVar(value="low")
-        ttk.Label(dialog, text="Choose training preset:").pack(anchor="w", padx=10, pady=(10, 4))
-        ttk.Combobox(dialog, values=["low", "medium", "high"], textvariable=preset_var, state="readonly", width=10).pack(
-            anchor="w", padx=10, pady=(0, 10)
-        )
-        result: list[str | None] = [None]
-
-        def _ok() -> None:
-            result[0] = preset_var.get()
-            dialog.destroy()
-
-        def _cancel() -> None:
-            dialog.destroy()
-
-        row = ttk.Frame(dialog)
-        row.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(row, text="Cancel", command=_cancel).pack(side="right", padx=(6, 0))
-        ttk.Button(row, text="OK", command=_ok).pack(side="right")
-        dialog.wait_window()
-        return result[0]
 
     def _center_dialog(self, dialog: tk.Toplevel) -> None:
         """Center a dialog over the main window."""
