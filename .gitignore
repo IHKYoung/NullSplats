@@ -1,5 +1,7 @@
 # Virtual environments
 .venv/
+.venv_sharp/
+.venv_backup/
 
 # Python cache
 __pycache__/
@@ -27,3 +29,4 @@ tools/glomap/
 tools/colmap/
 tools/gsplat_examples/
 exports/
+log/test.log

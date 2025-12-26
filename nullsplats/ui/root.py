@@ -20,6 +20,10 @@ def create_root(app_state: AppState) -> tk.Tk:
     root.title(app_state.config.window_title)
     root.geometry("1600x900")
     root.minsize(1600, 900)
+    # try:
+    #     root.state("zoomed")
+    # except Exception:
+    #     pass
 
     status_var = tk.StringVar(value="Ready.")
     notebook = _build_tabs(root, app_state, status_var)
@@ -94,6 +98,14 @@ def _build_tabs(root: tk.Tk, app_state: AppState, status_var: tk.StringVar) -> t
     notebook.add(colmap_tab.frame, text="COLMAP")
     notebook.add(training_tab.frame, text="Training")
     notebook.add(exports_tab.frame, text="Exports")
+
+    root._nullsplats_tabs = {  # type: ignore[attr-defined]
+        "inputs": inputs_tab,
+        "colmap": colmap_tab,
+        "training": training_tab,
+        "exports": exports_tab,
+        "notebook": notebook,
+    }
 
     last_idx = 0
     suppress = False

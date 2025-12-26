@@ -20,8 +20,8 @@ def default_colmap_path() -> str:
     bundled = root / "tools" / "colmap" / "COLMAP.bat"
     if bundled.exists():
         return str(bundled)
-    repo_default = Path(r"C:\Users\alec\source\python\NullSplats\tools\colmap\COLMAP.bat")
-    return str(repo_default)
+    repo_default = root / "tools" / "colmap" / "COLMAP.bat"
+    return str(repo_default) if repo_default.exists() else ""
 
 
 def default_cuda_path() -> str:

@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from typing import Callable, List
 
 from nullsplats.app_state import AppState
+
+
+INPUT_TYPE_VIDEO = "Video file"
+INPUT_TYPE_IMAGE = "Image file"
+INPUT_TYPE_IMAGES = "Image files"
+INPUT_TYPE_FOLDER = "Image folder"
+INPUT_TYPE_OPTIONS = [
+    INPUT_TYPE_VIDEO,
+    INPUT_TYPE_IMAGE,
+    INPUT_TYPE_IMAGES,
+    INPUT_TYPE_FOLDER,
+]
+
+BACKEND_GSPLAT = "Gsplat"
+BACKEND_DA3 = "DA3"
+BACKEND_SHARP = "SHARP"
+BACKEND_OPTIONS = [BACKEND_GSPLAT, BACKEND_DA3, BACKEND_SHARP]
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 
 class WizardStep:
@@ -75,7 +94,7 @@ class WizardWindow(tk.Toplevel):
             ),
             WizardStep(
                 "Step 2: COLMAP",
-                "Run COLMAP to compute camera poses for the active scene.",
+                "Run COLMAP to compute camera poses for the active scene (skip for DA3-only or SHARP-only runs).",
                 require_colmap,
                 lambda: self._go_tab(1),
             ),
@@ -215,14 +234,19 @@ class GuidedWizard(tk.Toplevel):
         self.notebook = notebook
         self.current_step = 0
 
-        self.source_type_var = tk.StringVar(value="video")
-        self.path_var = self.inputs_tab.video_path_var
-        self.folder_var = self.inputs_tab.image_dir_var
+        self.input_type_var = tk.StringVar(value=getattr(self.inputs_tab, "input_type_var", tk.StringVar(value=INPUT_TYPE_VIDEO)).get())
+        self.input_path_var = tk.StringVar(value=getattr(self.inputs_tab, "input_path_var", tk.StringVar()).get())
         self.candidate_var = tk.IntVar(value=self.inputs_tab.candidate_var.get())
         self.target_var = tk.IntVar(value=self.inputs_tab.target_var.get())
         self.resolution_var = tk.IntVar(value=self.inputs_tab.training_resolution_var.get())
         self.mode_var = tk.StringVar(value=self.inputs_tab.training_resample_var.get())
         self.preset_var = tk.StringVar(value="low")
+        self.backend_var = tk.StringVar(value=BACKEND_GSPLAT)
+        self.colmap_var = tk.BooleanVar(value=True)
+        self.resize_var = tk.BooleanVar(value=True)
+        self.training_hint_var = tk.StringVar(value="")
+        self.training_warn_var = tk.StringVar(value="")
+        self.detected_var = tk.StringVar(value="")
 
         self._build_ui()
 
@@ -257,26 +281,66 @@ class GuidedWizard(tk.Toplevel):
 
     def _build_step_inputs(self) -> ttk.Frame:
         frame = ttk.LabelFrame(self.card_frame, text="Inputs")
-        ttk.Radiobutton(frame, text="Video", variable=self.source_type_var, value="video").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Radiobutton(frame, text="Image folder", variable=self.source_type_var, value="images").grid(row=0, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(frame, text="Video file:").grid(row=1, column=0, sticky="w", padx=6)
-        ttk.Entry(frame, textvariable=self.path_var, width=60).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 6))
-        ttk.Label(frame, text="Image folder:").grid(row=2, column=0, sticky="w", padx=6)
-        ttk.Entry(frame, textvariable=self.folder_var, width=60).grid(row=2, column=1, columnspan=2, sticky="ew", padx=(0, 6))
+        ttk.Label(frame, text="Input path:").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 0))
+        ttk.Entry(frame, textvariable=self.input_path_var, width=60).grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=(0, 6), pady=(6, 0)
+        )
+
+        type_row = ttk.Frame(frame)
+        type_row.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(6, 0))
+        ttk.Label(type_row, text="Input type:").pack(side="left")
+        ttk.Combobox(
+            type_row,
+            values=INPUT_TYPE_OPTIONS,
+            textvariable=self.input_type_var,
+            state="readonly",
+            width=16,
+        ).pack(side="left", padx=(6, 10))
+        ttk.Button(type_row, text="Browse", command=self._browse_input).pack(side="left")
+
+        backend_row = ttk.Frame(frame)
+        backend_row.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 0))
+        ttk.Label(backend_row, text="Training backend:").pack(side="left")
+        backend_combo = ttk.Combobox(
+            backend_row,
+            values=BACKEND_OPTIONS,
+            textvariable=self.backend_var,
+            state="readonly",
+            width=14,
+        )
+        backend_combo.pack(side="left", padx=(6, 12))
+        self.colmap_toggle = ttk.Checkbutton(backend_row, text="Use COLMAP", variable=self.colmap_var)
+        self.colmap_toggle.pack(side="left")
+        self.resize_toggle = ttk.Checkbutton(backend_row, text="Resize frames", variable=self.resize_var)
+        self.resize_toggle.pack(side="left", padx=(12, 0))
+
+        detected_label = ttk.Label(frame, textvariable=self.detected_var, foreground="#444", wraplength=540, justify="left")
+        detected_label.grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
+        hint_label = ttk.Label(frame, textvariable=self.training_hint_var, foreground="#555", wraplength=540, justify="left")
+        hint_label.grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 0))
+        warn_label = ttk.Label(frame, textvariable=self.training_warn_var, foreground="#a00", wraplength=540, justify="left")
+        warn_label.grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 0))
+        backend_combo.bind("<<ComboboxSelected>>", lambda _: self._refresh_backend_constraints())
 
         row3 = ttk.Frame(frame)
-        row3.grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 4))
+        row3.grid(row=6, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 4))
         ttk.Label(row3, text="Candidate frames:").pack(side="left")
         ttk.Spinbox(row3, from_=1, to=10000, textvariable=self.candidate_var, width=8).pack(side="left", padx=(4, 12))
         ttk.Label(row3, text="Target frames:").pack(side="left")
         ttk.Spinbox(row3, from_=1, to=10000, textvariable=self.target_var, width=8).pack(side="left", padx=(4, 12))
         ttk.Label(row3, text="Resolution (px, small side):").pack(side="left")
-        ttk.Combobox(row3, values=[720, 1080, 2160], textvariable=self.resolution_var, state="readonly", width=12).pack(side="left", padx=(4, 8))
-        ttk.Combobox(row3, values=["lanczos", "bicubic", "bilinear", "nearest"], textvariable=self.mode_var, width=10, state="readonly").pack(side="left")
+        self.res_combo = ttk.Combobox(row3, values=[720, 1080, 2160], textvariable=self.resolution_var, state="readonly", width=12)
+        self.res_combo.pack(side="left", padx=(4, 8))
+        self.mode_combo = ttk.Combobox(row3, values=["lanczos", "bicubic", "bilinear", "nearest"], textvariable=self.mode_var, width=10, state="readonly")
+        self.mode_combo.pack(side="left")
 
         ttk.Button(frame, text="Extract and continue", command=self._extract_and_continue).grid(
-            row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(10, 6)
+            row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(10, 6)
         )
+        self.input_path_var.trace_add("write", lambda *_args: self._apply_profile_defaults())
+        self.input_type_var.trace_add("write", lambda *_args: self._apply_profile_defaults())
+        self.resize_var.trace_add("write", lambda *_args: self._update_resize_controls())
+        self._apply_profile_defaults()
         return frame
 
     def _build_step_colmap(self) -> ttk.Frame:
@@ -336,17 +400,173 @@ class GuidedWizard(tk.Toplevel):
             except Exception:
                 pass
 
+    def _backend_vram_warning(self, backend: str, count: int | None) -> str:
+        if count is None or count <= 10:
+            return ""
+        if backend in {BACKEND_DA3, BACKEND_SHARP}:
+            return "Warning: DA3/SHARP with more than 10 frames can require 40GB+ of VRAM."
+        return ""
+
+    def _backend_hint(self, profile: str) -> str:
+        if profile == "single":
+            return "Single frame mode. COLMAP disabled. Resize disabled."
+        if profile == "few":
+            return "Few-frame mode (2–15). COLMAP optional. Resize optional."
+        return "Many-frame mode (video or 16+). COLMAP recommended. Resize on by default."
+
+    def _infer_input_profile(self, path_str: str, input_type: str) -> dict | None:
+        if not path_str:
+            return None
+        path = Path(path_str)
+        count: int | None = None
+        if input_type == INPUT_TYPE_VIDEO:
+            profile = "many"
+        elif path.is_file():
+            count = 1
+            profile = "single"
+        elif path.is_dir():
+            count = sum(
+                1 for entry in path.iterdir() if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS
+            )
+            if count <= 1:
+                profile = "single"
+            elif count <= 15:
+                profile = "few"
+            else:
+                profile = "many"
+        else:
+            return None
+
+        if profile == "single":
+            backend = BACKEND_SHARP
+            colmap = False
+            resize = False
+            resize_allowed = False
+        elif profile == "few":
+            backend = BACKEND_DA3
+            colmap = False
+            resize = False
+            resize_allowed = True
+        else:
+            backend = BACKEND_GSPLAT
+            colmap = True
+            resize = True
+            resize_allowed = True
+
+        detected = f"Detected {count} image(s)." if count is not None else "Detected video input."
+        return {
+            "profile": profile,
+            "count": count,
+            "backend": backend,
+            "colmap": colmap,
+            "resize": resize,
+            "resize_allowed": resize_allowed,
+            "detected": detected,
+        }
+
+    def _apply_profile_defaults(self) -> None:
+        profile = self._infer_input_profile(self.input_path_var.get().strip(), self.input_type_var.get())
+        if profile is None:
+            self.detected_var.set("")
+            self.training_hint_var.set("")
+            self.training_warn_var.set("")
+            return
+        self.detected_var.set(profile["detected"])
+        self.training_hint_var.set(self._backend_hint(profile["profile"]))
+        self.backend_var.set(profile["backend"])
+        self.colmap_var.set(profile["colmap"])
+        self.resize_var.set(profile["resize"])
+        res_state = "readonly" if profile["resize_allowed"] else "disabled"
+        self.res_combo.configure(state=res_state)
+        self.mode_combo.configure(state=res_state)
+        self.resize_toggle.configure(state="normal" if profile["resize_allowed"] else "disabled")
+        if not profile["resize_allowed"]:
+            self.resize_var.set(False)
+        if self.backend_var.get() == BACKEND_GSPLAT:
+            self.colmap_var.set(True)
+            self.colmap_toggle.configure(state="disabled")
+        elif profile["profile"] == "single":
+            self.colmap_var.set(False)
+            self.colmap_toggle.configure(state="disabled")
+        else:
+            self.colmap_toggle.configure(state="normal")
+        self.training_warn_var.set(self._backend_vram_warning(self.backend_var.get(), profile.get("count")))
+
+    def _refresh_backend_constraints(self) -> None:
+        profile = self._infer_input_profile(self.input_path_var.get().strip(), self.input_type_var.get())
+        if self.backend_var.get() == BACKEND_GSPLAT:
+            self.colmap_var.set(True)
+            self.colmap_toggle.configure(state="disabled")
+        elif profile and profile["profile"] == "single":
+            self.colmap_var.set(False)
+            self.colmap_toggle.configure(state="disabled")
+        else:
+            self.colmap_toggle.configure(state="normal")
+        if profile:
+            self.training_warn_var.set(self._backend_vram_warning(self.backend_var.get(), profile.get("count")))
+
+    def _update_resize_controls(self) -> None:
+        state = "readonly" if self.resize_var.get() else "disabled"
+        self.res_combo.configure(state=state)
+        self.mode_combo.configure(state=state)
+
+    def _browse_input(self) -> None:
+        input_type = self.input_type_var.get()
+        if input_type == INPUT_TYPE_VIDEO:
+            path = filedialog.askopenfilename(
+                parent=self,
+                title="Select video file",
+                filetypes=[("Video files", "*.mp4 *.mov *.avi *.mkv"), ("All files", "*.*")],
+            )
+            if path:
+                self.input_path_var.set(path)
+            return
+        if input_type == INPUT_TYPE_IMAGE:
+            path = filedialog.askopenfilename(
+                parent=self,
+                title="Select image file",
+                filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp"), ("All files", "*.*")],
+            )
+            if path:
+                self.input_path_var.set(path)
+            return
+        if input_type == INPUT_TYPE_IMAGES:
+            paths = filedialog.askopenfilenames(
+                parent=self,
+                title="Select image files",
+                filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp"), ("All files", "*.*")],
+            )
+            staged = self.inputs_tab._stage_multi_image_selection(list(paths))
+            if staged:
+                self.input_path_var.set(staged)
+            return
+        path = filedialog.askdirectory(parent=self, title="Select image folder")
+        if path:
+            self.input_path_var.set(path)
+
+    def _apply_training_mode_to_tab(self) -> None:
+        backend = self.backend_var.get()
+        colmap_enabled = bool(self.colmap_var.get())
+        if backend == BACKEND_GSPLAT:
+            self.training_tab.training_method_var.set("gsplat")
+        elif backend == BACKEND_DA3:
+            self.training_tab.training_method_var.set("depth_anything_3")
+            self.training_tab.da3_allow_unposed_var.set(not colmap_enabled)
+        else:
+            self.training_tab.training_method_var.set("sharp")
+            self.training_tab.sharp_intrinsics_source_var.set("colmap" if colmap_enabled else "exif")
+        try:
+            self.training_tab._apply_trainer_capabilities()
+        except Exception:
+            pass
+
     def _extract_and_continue(self) -> None:
         try:
             # Sync vars to inputs tab
-            self.inputs_tab.source_type_var.set(self.source_type_var.get())
-            if self.source_type_var.get() == "video":
-                self.inputs_tab.video_path_var.set(self.path_var.get())
-            else:
-                self.inputs_tab.image_dir_var.set(self.folder_var.get())
+            self.inputs_tab._apply_input_selection(self.input_type_var.get(), self.input_path_var.get())
             self.inputs_tab.candidate_var.set(self.candidate_var.get())
             self.inputs_tab.target_var.set(self.target_var.get())
-            self.inputs_tab.training_resolution_var.set(self.resolution_var.get())
+            self.inputs_tab.training_resolution_var.set(self.resolution_var.get() if self.resize_var.get() else 0)
             self.inputs_tab.training_resample_var.set(self.mode_var.get())
             self.inputs_tab._on_resolution_change()
             self.inputs_tab._start_extraction()
@@ -370,7 +590,12 @@ class GuidedWizard(tk.Toplevel):
         self._show_step(1)
 
     def _run_colmap_and_continue(self) -> None:
+        if not self.colmap_var.get():
+            self._select_tab(2)
+            self._show_step(2)
+            return
         if self.colmap_tab is None:
+            self._select_tab(2)
             self._show_step(2)
             return
         try:
@@ -390,6 +615,7 @@ class GuidedWizard(tk.Toplevel):
         if self.training_tab is None:
             return
         try:
+            self._apply_training_mode_to_tab()
             self.training_tab.apply_training_preset(self.preset_var.get())
             self.training_tab.run_training()
             self.after(1000, self._wait_for_training)

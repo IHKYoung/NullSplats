@@ -52,7 +52,14 @@ class DepthAnything3Trainer:
             pass
 
         image_paths = [str(path) for path in inputs.images]
-        extrinsics, intrinsics = _build_camera_matrices(inputs, inputs.images)
+        if inputs.colmap is None:
+            extrinsics, intrinsics = _build_fallback_matrices(inputs.images, cfg)
+            if not cfg.get("use_ray_pose", False):
+                cfg["use_ray_pose"] = True
+            cfg.setdefault("prune_by_depth_percent", 1.0)
+            cfg.setdefault("trim_percent", 0.0)
+        else:
+            extrinsics, intrinsics = _build_camera_matrices(inputs, inputs.images)
 
         image_paths, extrinsics, intrinsics = _maybe_subsample_views(
             image_paths, extrinsics, intrinsics, cfg, inputs
@@ -64,21 +71,66 @@ class DepthAnything3Trainer:
         output_path = inputs.scene_paths.splats_dir / output_name
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if inputs.colmap is None or len(image_paths) < 2:
+            cfg["align_to_input_ext_scale"] = False
+        if len(image_paths) < 2:
+            cfg["prune_by_depth_percent"] = 1.0
+            cfg["trim_percent"] = 0.0
+            cfg["gs_views_interval"] = 1
+            cfg["opacity_min"] = max(float(cfg.get("opacity_min", 0.0) or 0.0), 0.05)
+            extrinsics = None
+            intrinsics = None
+
         prediction = None
         try:
-            prediction = model.inference(
-                image=image_paths,
-                extrinsics=extrinsics,
-                intrinsics=intrinsics,
-                align_to_input_ext_scale=cfg["align_to_input_ext_scale"],
-                infer_gs=cfg["infer_gs"],
-                use_ray_pose=cfg["use_ray_pose"],
-                ref_view_strategy=cfg["ref_view_strategy"],
-                process_res=process_res,
-                process_res_method=process_res_method,
-                export_dir=None,
-                export_format="mini_npz",
-            )
+            try:
+                prediction = model.inference(
+                    image=image_paths,
+                    extrinsics=extrinsics,
+                    intrinsics=intrinsics,
+                    align_to_input_ext_scale=cfg["align_to_input_ext_scale"],
+                    infer_gs=cfg["infer_gs"],
+                    use_ray_pose=cfg["use_ray_pose"],
+                    ref_view_strategy=cfg["ref_view_strategy"],
+                    process_res=process_res,
+                    process_res_method=process_res_method,
+                    export_dir=None,
+                    export_format="mini_npz",
+                )
+            except Exception as exc:
+                if cfg.get("align_to_input_ext_scale", False):
+                    cfg["align_to_input_ext_scale"] = False
+                    prediction = model.inference(
+                        image=image_paths,
+                        extrinsics=extrinsics,
+                        intrinsics=intrinsics,
+                        align_to_input_ext_scale=False,
+                        infer_gs=cfg["infer_gs"],
+                        use_ray_pose=cfg["use_ray_pose"],
+                        ref_view_strategy=cfg["ref_view_strategy"],
+                        process_res=process_res,
+                        process_res_method=process_res_method,
+                        export_dir=None,
+                        export_format="mini_npz",
+                    )
+                else:
+                    exc_msg = str(exc)
+                    if "Umeyama" in exc_msg or "Degenerate covariance" in exc_msg:
+                        prediction = model.inference(
+                            image=image_paths,
+                            extrinsics=None,
+                            intrinsics=None,
+                            align_to_input_ext_scale=False,
+                            infer_gs=cfg["infer_gs"],
+                            use_ray_pose=True,
+                            ref_view_strategy=cfg["ref_view_strategy"],
+                            process_res=process_res,
+                            process_res_method=process_res_method,
+                            export_dir=None,
+                            export_format="mini_npz",
+                        )
+                    else:
+                        raise exc
             _move_prediction_to_cpu(prediction)
         finally:
             try:
@@ -231,6 +283,12 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("gs_views_interval", 1)
     normalized.setdefault("max_views", 0)
     normalized.setdefault("view_stride", 1)
+    normalized.setdefault("fallback_fov_deg", 60.0)
+    normalized.setdefault("fallback_focal_px", 0.0)
+    normalized.setdefault("trim_percent", 8.0 / 256.0)
+    normalized.setdefault("prune_by_depth_percent", 0.9)
+    normalized.setdefault("opacity_scale", 1.0)
+    normalized.setdefault("opacity_min", 0.0)
     return normalized
 
 
@@ -264,18 +322,27 @@ def _export_gaussian_ply(prediction: Any, output_path: Path, config: dict[str, A
     world_shs = gaussians.harmonics
     world_rotations = gaussians.rotations
     gs_scales = gaussians.scales
-    gs_opacities = inverse_sigmoid(gaussians.opacities)
+    alpha = gaussians.opacities
+    alpha = torch.clamp(alpha, 1.0e-6, 1.0 - 1.0e-6)
+    opacity_scale = float(config.get("opacity_scale", 1.0))
+    opacity_min = float(config.get("opacity_min", 0.0))
+    if opacity_scale != 1.0:
+        alpha = torch.clamp(alpha * opacity_scale, 1.0e-6, 1.0 - 1.0e-6)
+    if opacity_min > 0.0:
+        alpha = torch.clamp(alpha, opacity_min, 1.0 - 1.0e-6)
+    gs_opacities = inverse_sigmoid(alpha)
 
     mask = torch.ones_like(ctx_depth, dtype=torch.bool)
-    gstrim_h = int(8 / 256 * out_h)
-    gstrim_w = int(8 / 256 * out_w)
+    trim_ratio = float(config.get("trim_percent", 8.0 / 256.0))
+    gstrim_h = int(trim_ratio * out_h)
+    gstrim_w = int(trim_ratio * out_w)
     if gstrim_h > 0 and gstrim_w > 0:
         mask[:, :gstrim_h, :, :] = 0
         mask[:, -gstrim_h:, :, :] = 0
         mask[:, :, :gstrim_w, :] = 0
         mask[:, :, -gstrim_w:, :] = 0
 
-    prune_by_depth_percent = 0.9
+    prune_by_depth_percent = float(config.get("prune_by_depth_percent", 0.9))
     if prune_by_depth_percent < 1.0:
         in_depths = ctx_depth
         d_percentile = torch.quantile(
@@ -311,12 +378,48 @@ def _export_gaussian_ply(prediction: Any, output_path: Path, config: dict[str, A
     )
 
 
-def _build_camera_matrices(inputs: TrainingInput, images: Iterable[Path]) -> tuple[np.ndarray, np.ndarray]:
+def _build_camera_matrices(
+    inputs: TrainingInput, images: Iterable[Path]
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if inputs.colmap is None:
+        return None, None
     ordered = _match_colmap_entries(inputs, images)
     extrinsics = np.stack([_colmap_to_extrinsics(entry) for entry in ordered], axis=0).astype(np.float32)
     intrinsics = np.stack(
         [_colmap_camera_to_intrinsics(inputs.colmap.cameras[entry.camera_id]) for entry in ordered], axis=0
     ).astype(np.float32)
+    return extrinsics, intrinsics
+
+
+def _build_fallback_matrices(
+    images: Iterable[Path], config: dict[str, Any]
+) -> tuple[np.ndarray, np.ndarray]:
+    sizes = [_read_image_size(path) for path in images]
+    fallback_focal = float(config.get("fallback_focal_px", 0.0) or 0.0)
+    fov_deg = float(config.get("fallback_fov_deg", 60.0) or 60.0)
+    fov_rad = np.deg2rad(max(1.0, fov_deg))
+    intrinsics_list = []
+    extrinsics_list = []
+    for width, height in sizes:
+        if fallback_focal > 0.0:
+            focal = fallback_focal
+        else:
+            focal = 0.5 * max(width, height) / np.tan(0.5 * fov_rad)
+        cx = width * 0.5
+        cy = height * 0.5
+        intrinsics_list.append(
+            np.array(
+                [
+                    [focal, 0.0, cx],
+                    [0.0, focal, cy],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+        )
+        extrinsics_list.append(np.eye(4, dtype=np.float32))
+    intrinsics = np.stack(intrinsics_list, axis=0)
+    extrinsics = np.stack(extrinsics_list, axis=0)
     return extrinsics, intrinsics
 
 
@@ -340,11 +443,11 @@ def _read_image_size(path: Path) -> tuple[int, int]:
 
 def _maybe_subsample_views(
     image_paths: list[str],
-    extrinsics: np.ndarray,
+    extrinsics: np.ndarray | None,
     intrinsics: np.ndarray | None,
     config: dict[str, Any],
     inputs: TrainingInput,
-) -> tuple[list[str], np.ndarray, np.ndarray | None]:
+) -> tuple[list[str], np.ndarray | None, np.ndarray | None]:
     stride = max(1, int(config.get("view_stride", 1) or 1))
     max_views = int(config.get("max_views", 0) or 0)
     if stride <= 1 and max_views <= 0:
@@ -358,7 +461,8 @@ def _maybe_subsample_views(
         raise ValueError("View subsampling produced an empty image list.")
 
     image_paths = [image_paths[i] for i in indices]
-    extrinsics = extrinsics[indices]
+    if extrinsics is not None:
+        extrinsics = extrinsics[indices]
     if intrinsics is not None:
         intrinsics = intrinsics[indices]
     return image_paths, extrinsics, intrinsics
@@ -372,6 +476,8 @@ def _select_views_by_colmap(
 ) -> list[int] | None:
     if max_views <= 0:
         return indices
+    if inputs.colmap is None:
+        return None
     try:
         entries = _match_colmap_entries(inputs, [Path(image_paths[i]) for i in indices])
     except Exception:
@@ -410,6 +516,8 @@ def _evenly_spaced(indices: list[int], max_views: int) -> list[int]:
 
 
 def _match_colmap_entries(inputs: TrainingInput, images: Iterable[Path]) -> list[ColmapImage]:
+    if inputs.colmap is None:
+        raise ValueError("COLMAP data is required to match camera entries.")
     images_by_name = {entry.name: entry for entry in inputs.colmap.images.values()}
     images_by_basename = {Path(entry.name).name: entry for entry in inputs.colmap.images.values()}
     ordered: list[ColmapImage] = []

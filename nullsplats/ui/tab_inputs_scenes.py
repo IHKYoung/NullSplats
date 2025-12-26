@@ -17,6 +17,17 @@ from nullsplats.backend.io_cache import load_metadata
 from nullsplats.util.threading import run_in_background
 
 
+IMAGE_FILE_TYPES = [
+    ("Image files", "*.png *.jpg *.jpeg *.bmp *.webp"),
+    ("All files", "*.*"),
+]
+
+INPUT_TYPE_VIDEO = "Video file"
+INPUT_TYPE_IMAGE = "Image file"
+INPUT_TYPE_IMAGES = "Image files"
+INPUT_TYPE_FOLDER = "Image folder"
+
+
 class InputsTabScenesMixin:
     def _build_scene_sidebar(self, parent: tk.Misc) -> None:
         ttk.Label(parent, text="Scenes", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
@@ -125,7 +136,7 @@ class InputsTabScenesMixin:
         source_path = self._current_source_path()
         name = self.scene_entry.get().strip() if self.scene_entry else ""
         if not name and not source_path:
-            self._set_status("Pick a video or image folder first, or enter a scene name.", is_error=True)
+            self._set_status("Pick an input path first, or enter a scene name.", is_error=True)
             return
         try:
             scene = self.app_state.scene_manager.ensure_scene_for_source(
@@ -176,12 +187,10 @@ class InputsTabScenesMixin:
 
         # Update UI fields to mirror the source being used.
         if source_type == "video":
-            self.video_path_var.set(source_path)
-            self.image_dir_var.set("")
+            self._apply_input_selection(INPUT_TYPE_VIDEO, source_path)
         else:
-            self.image_dir_var.set(source_path)
-            self.video_path_var.set("")
-        self.source_type_var.set(source_type)
+            input_type = INPUT_TYPE_IMAGE if Path(source_path).is_file() else INPUT_TYPE_FOLDER
+            self._apply_input_selection(input_type, source_path)
         candidate_count = int(self.candidate_var.get())
         target_count = int(self.target_var.get())
 
@@ -202,21 +211,28 @@ class InputsTabScenesMixin:
             filetypes=[("Video files", "*.mp4 *.mov *.avi *.mkv"), ("All files", "*.*")],
         )
         if path:
-            self.video_path_var.set(path)
-            self.image_dir_var.set("")
-            self.source_type_var.set("video")
-            self._maybe_autofill_scene_from_path(path)
-            self._sync_status()
+            self._apply_input_selection(INPUT_TYPE_VIDEO, path)
+            self._set_status("Input ready. Click Extract to create a new scene.", is_error=False)
+
+    def _choose_image_file(self) -> None:
+        path = filedialog.askopenfilename(title="Select image file", filetypes=IMAGE_FILE_TYPES)
+        if path:
+            self._apply_input_selection(INPUT_TYPE_IMAGE, path)
+            self._set_status("Input ready. Click Extract to create a new scene.", is_error=False)
+
+    def _choose_multi_image_files(self) -> None:
+        paths = filedialog.askopenfilenames(title="Select image files", filetypes=IMAGE_FILE_TYPES)
+        if not paths:
+            return
+        staged = self._stage_multi_image_selection(list(paths))
+        if staged:
+            self._apply_input_selection(INPUT_TYPE_IMAGES, staged)
             self._set_status("Input ready. Click Extract to create a new scene.", is_error=False)
 
     def _choose_image_dir(self) -> None:
         path = filedialog.askdirectory(title="Select image folder")
         if path:
-            self.image_dir_var.set(path)
-            self.video_path_var.set("")
-            self.source_type_var.set("images")
-            self._maybe_autofill_scene_from_path(path)
-            self._sync_status()
+            self._apply_input_selection(INPUT_TYPE_FOLDER, path)
             self._set_status("Input ready. Click Extract to create a new scene.", is_error=False)
 
     def _require_scene(self) -> Optional[str]:

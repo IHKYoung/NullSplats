@@ -5,11 +5,13 @@ from __future__ import annotations
 from nullsplats.backend.splat_backends.base import SplatTrainer
 from nullsplats.backend.splat_backends.depth_anything3_trainer import DepthAnything3Trainer
 from nullsplats.backend.splat_backends.gsplat_trainer import GsplatTrainer
+from nullsplats.backend.splat_backends.sharp_trainer import SharpTrainer
 
 
 _TRAINERS: dict[str, SplatTrainer] = {
     "gsplat": GsplatTrainer(),
     "depth_anything_3": DepthAnything3Trainer(),
+    "sharp": SharpTrainer(),
 }
 
 

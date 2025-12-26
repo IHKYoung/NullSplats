@@ -29,9 +29,35 @@ class TrainingTabLayoutMixin:
         paned.pack(fill="both", expand=True)
 
         right_col = ttk.Frame(paned)
-        left_col = ttk.Frame(paned, width=420)
+        left_outer = ttk.Frame(paned, width=420)
         paned.add(right_col, weight=3)
-        paned.add(left_col, weight=2)
+        paned.add(left_outer, weight=2)
+
+        # Scrollable left column to keep long training controls accessible.
+        left_canvas = tk.Canvas(left_outer, highlightthickness=0)
+        left_scroll = ttk.Scrollbar(left_outer, orient="vertical", command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_scroll.pack(side="right", fill="y")
+        left_canvas.pack(side="left", fill="both", expand=True)
+
+        left_col = ttk.Frame(left_canvas)
+        left_window_id = left_canvas.create_window((0, 0), window=left_col, anchor="nw")
+
+        def _update_left_scroll(_event=None) -> None:
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+
+        left_col.bind("<Configure>", _update_left_scroll)
+
+        def _on_left_resize(event) -> None:
+            left_canvas.itemconfigure(left_window_id, width=event.width)
+
+        left_canvas.bind("<Configure>", _on_left_resize)
+
+        def _on_mousewheel(event) -> None:
+            if left_canvas.winfo_height() < left_col.winfo_height():
+                left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        left_canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # --- Right: viewer-first layout ---
         preview_shell = ttk.Frame(right_col)
@@ -160,6 +186,8 @@ class TrainingTabLayoutMixin:
         self.gsplat_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
         self.da3_settings_frame = ttk.Frame(left_col)
         self.da3_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
+        self.sharp_settings_frame = ttk.Frame(left_col)
+        self.sharp_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
 
         primary_cfg = ttk.LabelFrame(self.gsplat_settings_frame, text="Gsplat settings")
         primary_cfg.pack(fill="x", padx=0, pady=(0, 6))
@@ -286,6 +314,53 @@ class TrainingTabLayoutMixin:
         da3_input_toggle.pack(side="left")
         self._register_control(da3_input_toggle)
 
+        da3_row6 = ttk.Frame(da3_body)
+        da3_row6.pack(fill="x", padx=6, pady=(0, 4))
+        da3_unposed_toggle = ttk.Checkbutton(
+            da3_row6,
+            text="Allow DA3 without poses (skip COLMAP)",
+            variable=self.da3_allow_unposed_var,
+        )
+        da3_unposed_toggle.pack(side="left")
+        self._register_control(da3_unposed_toggle)
+
+        sharp_body = ttk.LabelFrame(self.sharp_settings_frame, text="SHARP settings")
+        sharp_body.pack(fill="x", padx=0, pady=(0, 6))
+        sharp_row1 = ttk.Frame(sharp_body)
+        sharp_row1.pack(fill="x", padx=6, pady=(6, 4))
+        ttk.Label(sharp_row1, text="Checkpoint path:").pack(side="left")
+        sharp_ckpt_entry = ttk.Entry(sharp_row1, textvariable=self.sharp_checkpoint_path_var, width=28)
+        sharp_ckpt_entry.pack(side="left", padx=(4, 0), fill="x", expand=True)
+        self._register_control(sharp_ckpt_entry)
+
+        sharp_row2 = ttk.Frame(sharp_body)
+        sharp_row2.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(sharp_row2, text="Image index:").pack(side="left")
+        sharp_index_spin = ttk.Spinbox(sharp_row2, from_=0, to=100000, textvariable=self.sharp_image_index_var, width=8)
+        sharp_index_spin.pack(side="left", padx=(4, 12))
+        self._register_control(sharp_index_spin)
+        ttk.Label(sharp_row2, text="Intrinsics:").pack(side="left")
+        sharp_intrinsics_combo = ttk.Combobox(
+            sharp_row2,
+            textvariable=self.sharp_intrinsics_source_var,
+            values=("colmap", "exif", "manual"),
+            width=10,
+            state="readonly",
+        )
+        sharp_intrinsics_combo.pack(side="left", padx=(4, 12))
+        self._register_control(sharp_intrinsics_combo)
+
+        sharp_row3 = ttk.Frame(sharp_body)
+        sharp_row3.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(sharp_row3, text="Focal px override:").pack(side="left")
+        sharp_focal_entry = ttk.Entry(sharp_row3, textvariable=self.sharp_focal_px_var, width=10)
+        sharp_focal_entry.pack(side="left", padx=(4, 12))
+        self._register_control(sharp_focal_entry)
+        ttk.Label(sharp_row3, text="FOV override (deg):").pack(side="left")
+        sharp_fov_entry = ttk.Entry(sharp_row3, textvariable=self.sharp_fov_deg_var, width=10)
+        sharp_fov_entry.pack(side="left", padx=(4, 0))
+        self._register_control(sharp_fov_entry)
+
         # Advanced controls tucked away
         training_body = self._collapsible_section(self.gsplat_settings_frame, "Training config (advanced)", start_hidden=True)
         path_row = ttk.Frame(training_body)
@@ -401,13 +476,17 @@ class TrainingTabLayoutMixin:
             side="left", padx=(4, 0)
         )
 
-        ttk.Label(
-            left_col, text="Live logs stream below; full logs live in logs/app.log.", anchor="w", justify="left"
-        ).pack(anchor="w", padx=10, pady=(4, 4))
+        self.log_label = ttk.Label(
+            left_col,
+            text="Live logs stream below; full logs live in logs/app.log.",
+            anchor="w",
+            justify="left",
+        )
+        self.log_label.pack(anchor="w", padx=10, pady=(4, 4))
 
-        log_frame = ttk.LabelFrame(left_col, text="Live logs")
-        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.log_view = scrolledtext.ScrolledText(log_frame, wrap="word", height=12, width=80)
+        self.log_frame = ttk.LabelFrame(left_col, text="Live logs")
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.log_view = scrolledtext.ScrolledText(self.log_frame, wrap="word", height=12, width=80)
         self.log_view.pack(fill="both", expand=True, padx=6, pady=6)
         self.log_view.configure(state="disabled")
         self._attach_log_handler()

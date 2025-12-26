@@ -109,7 +109,7 @@ class SplatRenderer:
         )
 
         scales_log = _stack_props(raw, ("scale_0", "scale_1", "scale_2"))
-        opacities = torch.tensor(raw["opacity"], dtype=torch.float32)
+        opacities = _normalize_opacities(torch.tensor(raw["opacity"], dtype=torch.float32), path)
         quats_wxyz = _stack_props(raw, ("rot_0", "rot_1", "rot_2", "rot_3"))
         quats_wxyz = F.normalize(quats_wxyz, dim=1)
         logger.info("Renderer tensors prepared path=%s", path)
@@ -839,10 +839,15 @@ def _load_ply_properties(path: Path) -> np.ndarray:
 
     vertex_count = 0
     props: List[Tuple[str, str]] = []
+    current_element = None
     for line in header_lines:
-        if line.startswith("element vertex"):
-            vertex_count = int(line.split()[-1])
-        if line.startswith("property"):
+        if line.startswith("element"):
+            parts = line.split()
+            current_element = parts[1] if len(parts) > 1 else None
+            if current_element == "vertex" and len(parts) > 2:
+                vertex_count = int(parts[2])
+            continue
+        if line.startswith("property") and current_element == "vertex":
             parts = line.split()
             if len(parts) < 3:
                 continue
@@ -908,6 +913,29 @@ def _collect_rest_props(arr: np.ndarray) -> List[str]:
             props.append(name)
     props.sort(key=lambda n: int(n.split("_")[-1]))
     return props
+
+
+def _normalize_opacities(opacities: torch.Tensor, path: Path) -> torch.Tensor:
+    """Ensure opacities are in linear [0, 1] space for rendering."""
+    if opacities.numel() == 0:
+        return opacities
+    sanitized = torch.nan_to_num(opacities, nan=0.0, posinf=20.0, neginf=-20.0)
+    finite = torch.isfinite(sanitized)
+    if not finite.any():
+        logger.warning("PLY opacities are non-finite for %s; defaulting to zeros.", path)
+        return torch.zeros_like(opacities)
+    finite_vals = sanitized[finite]
+    min_val = float(finite_vals.min().item())
+    max_val = float(finite_vals.max().item())
+    if min_val < 0.0 or max_val > 1.0:
+        logger.info(
+            "PLY opacities look like logits for %s (min=%.3f max=%.3f); applying sigmoid.",
+            path,
+            min_val,
+            max_val,
+        )
+        return torch.sigmoid(sanitized)
+    return sanitized
 
 
 def _to_numpy(data: np.ndarray | torch.Tensor) -> np.ndarray:

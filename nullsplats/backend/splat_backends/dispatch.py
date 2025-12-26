@@ -19,12 +19,13 @@ def train_with_trainer(
     config: dict[str, Any],
     *,
     cache_root: str | Path = "cache",
+    allow_missing_colmap: bool = False,
     progress_callback: ProgressCallback | None = None,
     checkpoint_callback: CheckpointCallback | None = None,
     preview_callback: Callable[[PreviewPayload], None] | None = None,
 ) -> TrainingOutput:
     trainer = get_trainer(trainer_name)
-    inputs = build_training_input(scene_id, cache_root=cache_root)
+    inputs = build_training_input(scene_id, cache_root=cache_root, allow_missing_colmap=allow_missing_colmap)
     trainer.prepare(inputs, config)
     return trainer.train(
         inputs,

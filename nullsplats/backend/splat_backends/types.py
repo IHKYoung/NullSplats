@@ -18,7 +18,7 @@ class TrainingInput:
     frames_dir: Path
     colmap_dir: Path
     images: list[Path]
-    colmap: ColmapData
+    colmap: ColmapData | None
     metadata: dict[str, Any]
 
 

@@ -82,6 +82,12 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         self.da3_max_views_var = tk.IntVar(value=20)
         self.da3_align_scale_var = tk.BooleanVar(value=True)
         self.da3_infer_gs_var = tk.BooleanVar(value=True)
+        self.da3_allow_unposed_var = tk.BooleanVar(value=False)
+        self.sharp_checkpoint_path_var = tk.StringVar(value="")
+        self.sharp_intrinsics_source_var = tk.StringVar(value="colmap")
+        self.sharp_image_index_var = tk.IntVar(value=0)
+        self.sharp_focal_px_var = tk.DoubleVar(value=0.0)
+        self.sharp_fov_deg_var = tk.DoubleVar(value=0.0)
 
         self.scene_label: Optional[ttk.Label] = None
         self.scene_status_label: Optional[ttk.Label] = None
@@ -107,7 +113,8 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_bar: Optional[ttk.Progressbar] = None
         self._gsplat_section_visible = True
-        self._da3_section_visible = False
+        self._da3_section_visible = True
+        self._sharp_section_visible = True
 
         self._build_contents()
         self._apply_training_preset()  # default to medium preset settings
@@ -236,7 +243,10 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
         scene_id = self._require_scene()
         if scene_id is None:
             return
-        if not self._has_sfm_outputs(scene_id):
+        allow_missing_colmap = method == "depth_anything_3" and self.da3_allow_unposed_var.get()
+        if method == "sharp":
+            allow_missing_colmap = self.sharp_intrinsics_source_var.get().strip().lower() != "colmap"
+        if not self._has_sfm_outputs(scene_id) and not allow_missing_colmap:
             self._set_status("COLMAP outputs not found. Run COLMAP first.", is_error=True)
             return
         train_config = self._build_training_config(method)
@@ -279,6 +289,10 @@ class TrainingTab(TrainingTabLayoutMixin, TrainingTabPreviewMixin):
             trainer_name,
             train_config,
             cache_root=self.app_state.config.cache_root,
+            allow_missing_colmap=(
+                (trainer_name == "depth_anything_3" and self.da3_allow_unposed_var.get())
+                or (trainer_name == "sharp" and self.sharp_intrinsics_source_var.get().strip().lower() != "colmap")
+            ),
             progress_callback=self._report_progress,
             checkpoint_callback=self._handle_checkpoint,
             preview_callback=preview_callback,
@@ -532,20 +546,58 @@ print(json.dumps({{"render_time_ms": float(info.get("render_time_ms", 0.0))}}))
     def _show_method_sections(self, method: str) -> None:
         if not hasattr(self, "gsplat_settings_frame") or not hasattr(self, "da3_settings_frame"):
             return
+        if not hasattr(self, "sharp_settings_frame"):
+            return
+        log_label = getattr(self, "log_label", None)
         if method == "gsplat":
             if not self._gsplat_section_visible:
-                self.gsplat_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
+                if log_label is not None:
+                    self.gsplat_settings_frame.pack(fill="x", padx=10, pady=(0, 6), before=log_label)
+                else:
+                    self.gsplat_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
                 self._gsplat_section_visible = True
             if self._da3_section_visible:
                 self.da3_settings_frame.pack_forget()
                 self._da3_section_visible = False
+            if self._sharp_section_visible:
+                self.sharp_settings_frame.pack_forget()
+                self._sharp_section_visible = False
         elif method == "depth_anything_3":
             if self._gsplat_section_visible:
                 self.gsplat_settings_frame.pack_forget()
                 self._gsplat_section_visible = False
             if not self._da3_section_visible:
-                self.da3_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
+                if log_label is not None:
+                    self.da3_settings_frame.pack(fill="x", padx=10, pady=(0, 6), before=log_label)
+                else:
+                    self.da3_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
                 self._da3_section_visible = True
+            if self._sharp_section_visible:
+                self.sharp_settings_frame.pack_forget()
+                self._sharp_section_visible = False
+        elif method == "sharp":
+            if self._gsplat_section_visible:
+                self.gsplat_settings_frame.pack_forget()
+                self._gsplat_section_visible = False
+            if self._da3_section_visible:
+                self.da3_settings_frame.pack_forget()
+                self._da3_section_visible = False
+            if not self._sharp_section_visible:
+                if log_label is not None:
+                    self.sharp_settings_frame.pack(fill="x", padx=10, pady=(0, 6), before=log_label)
+                else:
+                    self.sharp_settings_frame.pack(fill="x", padx=10, pady=(0, 6))
+                self._sharp_section_visible = True
+        else:
+            if self._gsplat_section_visible:
+                self.gsplat_settings_frame.pack_forget()
+                self._gsplat_section_visible = False
+            if self._da3_section_visible:
+                self.da3_settings_frame.pack_forget()
+                self._da3_section_visible = False
+            if self._sharp_section_visible:
+                self.sharp_settings_frame.pack_forget()
+                self._sharp_section_visible = False
 
     def _build_training_config(self, method: str) -> dict[str, Any] | SplatTrainingConfig:
         if method == "gsplat":
@@ -598,6 +650,18 @@ print(json.dumps({{"render_time_ms": float(info.get("render_time_ms", 0.0))}}))
                 "gs_views_interval": int(self.da3_gs_views_interval_var.get()),
                 "view_stride": int(self.da3_view_stride_var.get()),
                 "max_views": int(self.da3_max_views_var.get()),
+            }
+        if method == "sharp":
+            checkpoint_path = self.sharp_checkpoint_path_var.get().strip()
+            focal_px_override = float(self.sharp_focal_px_var.get() or 0.0)
+            fov_override = float(self.sharp_fov_deg_var.get() or 0.0)
+            return {
+                "checkpoint_path": checkpoint_path or None,
+                "device": self.device_var.get().strip() or "default",
+                "intrinsics_source": self.sharp_intrinsics_source_var.get().strip() or "colmap",
+                "image_index": int(self.sharp_image_index_var.get() or 0),
+                "focal_px_override": focal_px_override if focal_px_override > 0.0 else None,
+                "fov_override_deg": fov_override if fov_override > 0.0 else None,
             }
         raise ValueError(f"Unsupported training method: {method}")
 
