@@ -12,13 +12,57 @@ https://github.com/user-attachments/assets/6bcda99b-5d9d-4960-a759-5008b4bdc766
 - View splats in an embedded OpenGL viewer inside the app.
 - Keep per-scene inputs/outputs under cache for repeatable workflows.
 
-## Examples
+Nullsplats supports 3 methods of creating splats:
 
-A few sample splats viewable directly in the browser via SuperSplat:
+1. Traditional colmap + [gsplat](https://github.com/nerfstudio-project/gsplat) training.
+2. [Depth Anything 3](github.com/ByteDance-Seed/depth-anything-3) 3D Gaussian Estimation.
+3. [SHARP](https://github.com/apple/ml-sharp) Monocular View Synthesis.
 
+Here are some sample splats trained using this program.
 - [50 views — gsplat, 720p (iter 12k)](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fgsplat_iter_12000_50views_720p.splat)
 - [5 views — Depth Anything 3, 720p](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fsplat_DA3_5views_720p.splat)
 - [1 view — SHARP, 720p](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fsplat_SHARP_1views_720p.splat)
+
+<details>
+<summary>Video Examples</summary>
+
+<table>
+  <tr>
+    <td align="center"><strong>Gsplat 50-view</strong><br>
+      <video src="assets/training_videos/gsplat_50view_720p.mp4" controls width="320"></video>
+    </td>
+    <td align="center"><strong>Gsplat closeup</strong><br>
+      <video src="assets/training_videos/gsplat_closeup.mp4" controls width="320"></video>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>DA3 5-view</strong><br>
+      <video src="assets/training_videos/DA3_5view_720p.mp4" controls width="320"></video>
+    </td>
+    <td align="center"><strong>DA3 closeup</strong><br>
+      <video src="assets/training_videos/DA3_closeup.mp4" controls width="320"></video>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>SHARP 1-view</strong><br>
+      <video src="assets/training_videos/SHARP_1view_720p.mp4" controls width="320"></video>
+    </td>
+    <td align="center"><strong>SHARP closeup</strong><br>
+      <video src="assets/training_videos/SHARP_Closeup.mp4" controls width="320"></video>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><strong>Side-by-side comparison</strong><br>
+      <video src="assets/training_videos/Comparison_Closeup.mp4" controls width="640"></video>
+    </td>
+  </tr>
+</table>
+
+</details>
+
+On my RTX pro 6000 Blackwell the gsplat trained in around 5 minutes including colmap time. Depth Anything 3 took around 3-4 minutes but used a significant 16GB of vram. SHARP produced a splat in around 2.5 minutes.
+
+Overall each is pretty good considering the input. The single view SHARP splat is particularly impressive. If DA3 was less weird, was less transparent it would be significantly better. The geometry looks pretty good.
 
 ## Discord
 
