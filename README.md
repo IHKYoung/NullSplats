@@ -12,6 +12,14 @@ https://github.com/user-attachments/assets/6bcda99b-5d9d-4960-a759-5008b4bdc766
 - View splats in an embedded OpenGL viewer inside the app.
 - Keep per-scene inputs/outputs under cache for repeatable workflows.
 
+## Examples
+
+A few sample splats viewable directly in the browser via SuperSplat:
+
+- [50 views — gsplat, 720p (iter 12k)](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fgsplat_iter_12000_50views_720p.splat)
+- [5 views — Depth Anything 3, 720p](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fsplat_DA3_5views_720p.splat)
+- [1 view — SHARP, 720p](https://superspl.at/editor?load=https%3A%2F%2Fraw.githubusercontent.com%2FNullandKale%2FNullSplats%2Fmaster%2Fassets%2Fsplat_SHARP_1views_720p.splat)
+
 ## Discord
 
 Want to discuss development or get support? Open an Issue or checkout the [discord](https://discord.gg/nP8BMtZ42C).
