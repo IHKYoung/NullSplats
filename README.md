@@ -26,37 +26,26 @@ Here are some sample splats trained using this program.
 <details>
 <summary>Video Examples</summary>
 
-<table>
-  <tr>
-    <td align="center"><strong>Gsplat 50-view</strong><br>
-      <video src="assets/training_videos/gsplat_50view_720p.mp4" controls width="320"></video>
-    </td>
-    <td align="center"><strong>Gsplat closeup</strong><br>
-      <video src="assets/training_videos/gsplat_closeup.mp4" controls width="320"></video>
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><strong>DA3 5-view</strong><br>
-      <video src="assets/training_videos/DA3_5view_720p.mp4" controls width="320"></video>
-    </td>
-    <td align="center"><strong>DA3 closeup</strong><br>
-      <video src="assets/training_videos/DA3_closeup.mp4" controls width="320"></video>
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><strong>SHARP 1-view</strong><br>
-      <video src="assets/training_videos/SHARP_1view_720p.mp4" controls width="320"></video>
-    </td>
-    <td align="center"><strong>SHARP closeup</strong><br>
-      <video src="assets/training_videos/SHARP_Closeup.mp4" controls width="320"></video>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><strong>Side-by-side comparison</strong><br>
-      <video src="assets/training_videos/Comparison_Closeup.mp4" controls width="640"></video>
-    </td>
-  </tr>
-</table>
+<p><strong>Gsplat 50-view</strong><br>
+<video src="assets/training_videos/gsplat_50view_720p.mp4" controls width="320"></video></p>
+
+<p><strong>Gsplat closeup</strong><br>
+<video src="assets/training_videos/gsplat_closeup.mp4" controls width="320"></video></p>
+
+<p><strong>DA3 5-view</strong><br>
+<video src="assets/training_videos/DA3_5view_720p.mp4" controls width="320"></video></p>
+
+<p><strong>DA3 closeup</strong><br>
+<video src="assets/training_videos/DA3_closeup.mp4" controls width="320"></video></p>
+
+<p><strong>SHARP 1-view</strong><br>
+<video src="assets/training_videos/SHARP_1view_720p.mp4" controls width="320"></video></p>
+
+<p><strong>SHARP closeup</strong><br>
+<video src="assets/training_videos/SHARP_Closeup.mp4" controls width="320"></video></p>
+
+<p><strong>Side-by-side comparison</strong><br>
+<video src="assets/training_videos/Comparison_Closeup.mp4" controls width="640"></video></p>
 
 </details>
 
