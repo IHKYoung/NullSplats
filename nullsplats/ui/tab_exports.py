@@ -19,6 +19,7 @@ from nullsplats.ui.advanced_render_controls import AdvancedRenderSettingsPanel
 from nullsplats.ui.colmap_camera_panel import ColmapCameraPanel
 from nullsplats.ui.gl_canvas import CameraView, GLCanvas
 from nullsplats.ui.render_controls import RenderSettingsPanel
+from nullsplats.backend.io_cache import ensure_scene_dirs
 from nullsplats.util.logging import get_logger
 from nullsplats.util.threading import run_in_background
 
@@ -145,7 +146,10 @@ class ExportsTab:
                 self.frame.after(150, lambda path=pending: self._start_preview(path))
         else:
             self.logger.debug("Exports tab hidden; stopping renderer")
-            self.viewer.stop_rendering()
+            try:
+                self.viewer.stop_rendering()
+            except Exception:  # noqa: BLE001
+                self.logger.exception("Failed to stop exports viewer")
 
     def _refresh_scenes(self) -> None:
         scenes = [str(status.scene_id) for status in self.app_state.scene_manager.list_scenes()]
@@ -164,7 +168,10 @@ class ExportsTab:
             self.status_var.set("No scene selected.")
             return
         self.app_state.set_current_scene(scene_id)
-        paths = self.app_state.scene_manager.get(scene_id).paths
+        try:
+            paths = self.app_state.scene_manager.get(scene_id).paths
+        except FileNotFoundError:
+            paths = ensure_scene_dirs(scene_id, cache_root=self.app_state.config.cache_root)
         splat_dir = paths.splats_dir
         if not splat_dir.exists():
             splat_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +194,10 @@ class ExportsTab:
         self.preview_note_var.set("Preview idle." if checkpoints else "No checkpoints yet.")
         self.status_var.set(f"Found {len(checkpoints)} checkpoint(s) in {splat_dir}.")
         if hasattr(self, "colmap_panel"):
-            self.colmap_panel.refresh()
+            try:
+                self.colmap_panel.refresh()
+            except FileNotFoundError:
+                self.logger.debug("COLMAP panel refresh skipped; scene metadata missing.")
 
     def _selected_checkpoint(self) -> Optional[Path]:
         if not self.checkpoint_paths:

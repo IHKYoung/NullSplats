@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
+import shutil
 from tkinter import messagebox, ttk
 from typing import Callable, Dict, List, Optional
 import time
@@ -15,6 +17,18 @@ from nullsplats.ui.tab_inputs_scenes import InputsTabScenesMixin
 from nullsplats.ui.tab_inputs_wizard import InputsTabWizardMixin
 from nullsplats.util.logging import get_logger
 from nullsplats.util.threading import run_in_background
+
+
+INPUT_TYPE_VIDEO = "Video file"
+INPUT_TYPE_IMAGE = "Image file"
+INPUT_TYPE_IMAGES = "Image files"
+INPUT_TYPE_FOLDER = "Image folder"
+INPUT_TYPE_OPTIONS = [
+    INPUT_TYPE_VIDEO,
+    INPUT_TYPE_IMAGE,
+    INPUT_TYPE_IMAGES,
+    INPUT_TYPE_FOLDER,
+]
 
 
 class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
@@ -44,6 +58,8 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         self.source_type_var = tk.StringVar(value="video")
         self.video_path_var = tk.StringVar()
         self.image_dir_var = tk.StringVar()
+        self.input_path_var = tk.StringVar()
+        self.input_type_var = tk.StringVar(value=INPUT_TYPE_VIDEO)
         self.candidate_var = tk.IntVar(value=100)
         self.target_var = tk.IntVar(value=50)
         self.training_resolution_var = tk.IntVar(value=getattr(app_state, "training_image_target_px", 1080))
@@ -81,6 +97,7 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         self._thumb_workers: int = 0
         self._max_thumb_workers: int = 4
         self._thumb_inflight: set[tuple[str, str]] = set()
+        self._multi_image_paths: list[str] = []
         style = ttk.Style()
         try:
             style.configure("ActiveCard.TFrame", background="#dbeafe")
@@ -91,7 +108,7 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         self.logger.info("InputsTab layout built; refreshing scenes...")
         self.refresh_scenes()
         # Nudge focus to the source input so the user starts with extraction.
-        self.frame.after(100, lambda: self.video_path_entry.focus_set() if hasattr(self, "video_path_entry") else None)
+        self.frame.after(100, lambda: self.input_path_entry.focus_set() if hasattr(self, "input_path_entry") else None)
 
     def _register_control(self, widget: tk.Widget) -> None:
         """Track interactive widgets so we can disable/enable during long tasks."""
@@ -127,16 +144,27 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
 
         path_row = ttk.Frame(source_card)
         path_row.pack(fill="x", padx=6, pady=(6, 4))
-        ttk.Label(path_row, text="Input (video or folder):").grid(row=0, column=0, sticky="w")
-        self.video_path_entry = ttk.Entry(path_row, textvariable=self.video_path_var, width=38)
-        self.video_path_entry.grid(row=0, column=1, sticky="ew", padx=(4, 4))
-        btn_pick_video = ttk.Button(path_row, text="Choose video", command=self._choose_video)
-        btn_pick_video.grid(row=0, column=2, sticky="e")
-        self._register_control(btn_pick_video)
-        btn_pick_folder = ttk.Button(path_row, text="Choose folder", command=self._choose_image_dir)
-        btn_pick_folder.grid(row=1, column=2, sticky="e", pady=(4, 0))
-        self._register_control(btn_pick_folder)
+        ttk.Label(path_row, text="Input path:").grid(row=0, column=0, sticky="w")
+        self.input_path_entry = ttk.Entry(path_row, textvariable=self.input_path_var, width=38)
+        self.input_path_entry.grid(row=0, column=1, sticky="ew", padx=(4, 0))
         path_row.columnconfigure(1, weight=1)
+
+        type_row = ttk.Frame(source_card)
+        type_row.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(type_row, text="Input type:").grid(row=0, column=0, sticky="w")
+        type_combo = ttk.Combobox(
+            type_row,
+            textvariable=self.input_type_var,
+            values=INPUT_TYPE_OPTIONS,
+            state="readonly",
+            width=18,
+        )
+        type_combo.grid(row=0, column=1, sticky="w", padx=(4, 8))
+        type_combo.bind("<<ComboboxSelected>>", lambda _: self._sync_source_type_from_input())
+        btn_pick = ttk.Button(type_row, text="Browse", command=self._choose_input_by_type)
+        btn_pick.grid(row=0, column=2, sticky="e")
+        self._register_control(type_combo)
+        self._register_control(btn_pick)
 
         wizard_row = ttk.Frame(source_card)
         wizard_row.pack(fill="x", padx=6, pady=(0, 4))
@@ -267,11 +295,10 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
     def _start_extraction(self) -> None:
         candidate_count = int(self.candidate_var.get())
         target_count = int(self.target_var.get())
-        source_type = self.source_type_var.get()
-        source_path = self.video_path_var.get().strip() if source_type == "video" else self.image_dir_var.get().strip()
+        source_type, source_path = self._resolve_input_source()
 
         if not source_path:
-            self._set_status("Select a video file or image folder first.", is_error=True)
+            self._set_status("Select an input path first.", is_error=True)
             return
         scene_id = self._ensure_scene_for_source(source_path, force_new=True)
         if scene_id is None:
@@ -390,7 +417,7 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
             self.canvas.create_text(
                 self.canvas.winfo_width() // 2,
                 self.canvas.winfo_height() // 2,
-                text="Pick or create a scene to view frames.\nUse the right-hand panel to choose a video or image folder.",
+                text="Pick or create a scene to view frames.\nUse the right-hand panel to choose a video or image input.",
                 anchor="center",
                 justify="center",
                 tags="placeholder",
@@ -504,9 +531,72 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
         return candidate
 
     def _current_source_path(self) -> str:
-        if self.source_type_var.get() == "video":
-            return self.video_path_var.get().strip()
-        return self.image_dir_var.get().strip()
+        return self.input_path_var.get().strip()
+
+    def _sync_source_type_from_input(self) -> None:
+        source_type = "video" if self.input_type_var.get().strip() == INPUT_TYPE_VIDEO else "images"
+        if self.source_type_var.get() != source_type:
+            self.source_type_var.set(source_type)
+
+    def _resolve_input_source(self) -> tuple[str, str]:
+        input_type = self.input_type_var.get().strip()
+        source_path = self.input_path_var.get().strip()
+        source_type = "video" if input_type == INPUT_TYPE_VIDEO else "images"
+        if self.source_type_var.get() != source_type:
+            self.source_type_var.set(source_type)
+        return source_type, source_path
+
+    def _apply_input_selection(self, input_type: str, path: str) -> None:
+        clean_path = path.strip()
+        self.input_type_var.set(input_type)
+        self.input_path_var.set(clean_path)
+        if input_type == INPUT_TYPE_VIDEO:
+            self.source_type_var.set("video")
+            self.video_path_var.set(clean_path)
+            self.image_dir_var.set("")
+        else:
+            self.source_type_var.set("images")
+            self.image_dir_var.set(clean_path)
+            self.video_path_var.set(clean_path)
+        if clean_path:
+            self._maybe_autofill_scene_from_path(clean_path)
+        self._sync_status()
+
+    def _stage_multi_image_selection(self, files: list[str]) -> str:
+        if not files:
+            return ""
+        cache_root = Path(self.app_state.config.cache_root)
+        staging_root = cache_root / "inputs" / "_multi_select"
+        staging_root.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        target = staging_root / f"images_{stamp}"
+        suffix = 1
+        while target.exists():
+            target = staging_root / f"images_{stamp}_{suffix}"
+            suffix += 1
+        target.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for item in files:
+            src = Path(item)
+            if not src.is_file():
+                continue
+            shutil.copy2(src, target / src.name)
+            copied += 1
+        if copied == 0:
+            return ""
+        self._multi_image_paths = list(files)
+        return str(target)
+
+    def _choose_input_by_type(self) -> None:
+        input_type = self.input_type_var.get()
+        if input_type == INPUT_TYPE_VIDEO:
+            self._choose_video()
+        elif input_type == INPUT_TYPE_IMAGE:
+            self._choose_image_file()
+        elif input_type == INPUT_TYPE_IMAGES:
+            self._choose_multi_image_files()
+        else:
+            self._choose_image_dir()
 
     def _handle_toggle_var(self, filename: str, var: tk.BooleanVar) -> None:
         self.selection_state[filename] = bool(var.get())
@@ -529,6 +619,10 @@ class InputsTab(InputsTabScenesMixin, InputsTabGridMixin, InputsTabWizardMixin):
                 pass
             self._autosave_job = None
         if not self._dirty_selection:
+            return
+        if self._extracting:
+            self._set_status("Waiting for extraction to finish before saving selection...")
+            self._schedule_autosave("waiting_for_extraction", delay_ms=500)
             return
         scene_id = self._require_scene()
         if scene_id is None:

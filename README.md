@@ -12,6 +12,10 @@ https://github.com/user-attachments/assets/6bcda99b-5d9d-4960-a759-5008b4bdc766
 - View splats in an embedded OpenGL viewer inside the app.
 - Keep per-scene inputs/outputs under cache for repeatable workflows.
 
+## Discord
+
+Want to discuss development or get support? Open an Issue or checkout the [discord](https://discord.gg/nP8BMtZ42C).
+
 ## Repository layout
 
 - main.py - app entrypoint (Tk root + tabs).
@@ -77,6 +81,7 @@ extraction, COLMAP structure-from-motion, and gsplat training.
 
 #### Training Tab
 - ui/tab_training.py orchestrates training runs, manages logging, and owns preview state.
+- Training method is selectable (gsplat or DA3). Live preview is gsplat-only.
 - ui/tab_training_layout.py builds the UI widgets.
 - ui/tab_training_preview.py handles preview polling + in-memory preview queue.
 - Backend calls:
@@ -105,6 +110,7 @@ extraction, COLMAP structure-from-motion, and gsplat training.
   - backend/splat_train_io.py (COLMAP text parsing + frame loading)
   - backend/splat_train_ops.py (CUDA config, optimizers, export helpers)
   - backend/gs_utils.py (camera/appearance optimization utilities)
+- DA3 backend: backend/splat_backends/depth_anything3_trainer.py (Depth Anything 3 inference + gs_ply export)
 
 ### Rendering and Viewer Stack
 - ui/gl_canvas.py is the main preview surface:
@@ -137,6 +143,29 @@ extraction, COLMAP structure-from-motion, and gsplat training.
 - ffmpeg/ffprobe on PATH (for video extraction).
 - COLMAP binaries (CUDA build recommended) under tools/colmap or user-provided path.
 - Optional: GLOMAP binaries under tools/glomap (future use).
+- Optional: Depth Anything 3 backend (pip install from GitHub; no submodule).
+- Optional: SHARP backend (tools/sharp is included; install editable deps).
+
+## Depth Anything 3 (DA3) backend
+
+DA3 uses the official Depth Anything 3 API and emits `.ply` splats into the cache.
+It requires installing the project via pip from GitHub:
+
+```
+pip install git+https://github.com/ByteDance-Seed/Depth-Anything-3
+```
+
+DA3 settings live in the Training tab (process resolution, view selection, and COLMAP-based view scoring).
+If COLMAP confidence is missing, DA3 falls back to evenly spaced views.
+
+## SHARP backend
+
+SHARP runs on single images and can optionally use COLMAP intrinsics for multi-view runs.
+The repo includes the SHARP source under tools/sharp; install it in editable mode:
+
+```
+pip install -e tools/sharp
+```
 
 ## Install for development
 
@@ -149,6 +178,18 @@ pip install -r requirements.txt
 ```
 
 If you need to bootstrap CUDA-friendly PyTorch/gsplat, run tools\setup_cuda_venv.bat (optional helper if present).
+
+For DA3 support:
+
+```
+pip install git+https://github.com/ByteDance-Seed/Depth-Anything-3
+```
+
+For SHARP support (if you skipped it in requirements):
+
+```
+pip install -e tools/sharp
+```
 
 ## Running the app
 

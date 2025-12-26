@@ -26,6 +26,7 @@ from nullsplats.util.scene_id import SceneId
 
 
 logger = get_logger("video_frames")
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 
 @dataclass(frozen=True)
@@ -182,7 +183,7 @@ def load_cached_frames(scene_id: str | SceneId, cache_root: str | Path = "cache"
             [
                 path.name
                 for path in paths.frames_selected_dir.iterdir()
-                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}
+                if path.suffix.lower() in IMAGE_EXTENSIONS
             ]
         )
     candidate_count = int(metadata.get("candidate_count", len(available_frames)))
@@ -307,13 +308,22 @@ def _copy_source_to_cache(source: Path, dest_dir: Path, source_type: str) -> Pat
         shutil.copy2(source, destination)
         logger.info("Copied video source to %s", destination)
         return destination
+    if source.is_file():
+        if source.suffix.lower() not in IMAGE_EXTENSIONS:
+            raise ValueError(f"Expected an image file for source_type=images, got {source}")
+        destination = dest_dir
+        _clear_directory(destination)
+        target = destination / source.name
+        shutil.copy2(source, target)
+        logger.info("Copied image source to %s", target)
+        return destination
     if not source.is_dir():
-        raise ValueError(f"Expected an image directory for source_type=images, got {source}")
+        raise ValueError(f"Expected an image file or directory for source_type=images, got {source}")
     destination = dest_dir
     _clear_directory(destination)
     copied = 0
     for entry in sorted(source.iterdir()):
-        if entry.is_file() and entry.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}:
+        if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS:
             shutil.copy2(entry, destination / entry.name)
             copied += 1
     if copied == 0:
@@ -415,7 +425,7 @@ def _extract_from_image_folder(
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> List[FrameScore]:
     image_files = [
-        path for path in sorted(source_dir.iterdir()) if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}
+        path for path in sorted(source_dir.iterdir()) if path.suffix.lower() in IMAGE_EXTENSIONS
     ]
     if not image_files:
         raise FileNotFoundError(f"No images to process in {source_dir}")

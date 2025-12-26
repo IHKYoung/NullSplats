@@ -1,7 +1,8 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 set "APP_DIR=%~dp0"
 if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
+if exist "%APP_DIR%\NullSplats-portable" set "APP_DIR=%APP_DIR%\NullSplats-portable"
 
 rem Prefer bundled base Python; fall back to venv python.
 set "PY_HOME=%APP_DIR%\python"
@@ -32,5 +33,20 @@ if exist "%COLMAP_ROOT%\lib" set "PATH=%COLMAP_ROOT%\lib;%PATH%"
 if defined PY_HOME set "PYTHONHOME=%PY_HOME%"
 
 pushd "%APP_DIR%" >nul
+if /I "%1"=="--test" (
+  shift
+  call set "TEST_ARGS=%%*"
+  if exist "%APP_DIR%\test.py" (
+    "%PYTHON_EXE%" "%APP_DIR%\test.py" !TEST_ARGS!
+  ) else if exist "%APP_DIR%\..\test.py" (
+    "%PYTHON_EXE%" -c "import runpy, sys; sys.path.insert(0, r'%APP_DIR%'); runpy.run_path(r'%APP_DIR%\..\test.py', run_name='__main__')" !TEST_ARGS!
+  ) else (
+    echo [error] test.py not found at %APP_DIR% or %APP_DIR%\..
+    popd >nul
+    exit /b 1
+  )
+  popd >nul
+  exit /b %ERRORLEVEL%
+)
 "%PYTHON_EXE%" "%APP_DIR%\main.py" %*
 popd >nul
